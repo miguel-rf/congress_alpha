@@ -1,0 +1,13 @@
+{
+    "suffix_rules": {
+        "US_STOCK": "_US_EQ",
+        "US_ETF": "_US_EQ",
+        "UK_STOCK": "_EQ"
+    },
+    "explicit_mappings": {
+        "BRK.B": "BRKb_US_EQ",
+        "BRK.A": "BRKa_US_EQ"
+    },
+    "default_suffix": "_US_EQ",
+    "notes": "Trading212 uses suffixed tickers. Most US stocks/ETFs use _US_EQ suffix."
+}

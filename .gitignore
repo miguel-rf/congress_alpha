@@ -1,0 +1,93 @@
+# Environment and secrets
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Data files (keep structure, ignore content)
+data/raw_pdfs/*.pdf
+data/*.db
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Node modules (for UI)
+node_modules/
+.next/
+
+# Cookies (contains sensitive session data)
+config/cookies.json
+
+# Playwright browser cache
+playwright/.cache/
+.playwright/
+
+# Testing & Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+coverage.xml
+*.cover
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# mypy type checking
+.mypy_cache/
+
+# Ruff linter cache
+.ruff_cache/
+
+# Local development overrides
+docker-compose.override.yml
+*.local
+
+# Screenshots/recordings from Playwright
+screenshots/
+recordings/
+test-results/

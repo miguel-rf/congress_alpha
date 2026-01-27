@@ -1,0 +1,95 @@
+{
+    "_comment": "Congressional Elite - Politicians with historically profitable trading patterns",
+    "_instructions": [
+        "Add politicians you want to track here",
+        "Name should match disclosure filings exactly",
+        "Chamber: 'house' or 'senate'"
+    ],
+    "politicians": [
+        {
+            "name": "Nancy Pelosi",
+            "chamber": "house",
+            "notes": "Former Speaker, known for tech stock timing"
+        },
+        {
+            "name": "Paul Pelosi",
+            "chamber": "house",
+            "notes": "Spouse disclosure - same household trades"
+        },
+        {
+            "name": "Daniel S. Goldman",
+            "chamber": "house",
+            "notes": "Active trader with frequent disclosures"
+        },
+        {
+            "name": "David Rouzer",
+            "chamber": "house",
+            "notes": "Top performer 2024 (+149.0% return)"
+        },
+        {
+            "name": "Debbie Wasserman Schultz",
+            "chamber": "house",
+            "notes": "Elite performer 2024 (+142.3% return)"
+        },
+        {
+            "name": "Ron Wyden",
+            "chamber": "senate",
+            "notes": "Top Senate performer 2024 (+123.8% return)"
+        },
+        {
+            "name": "Ro Khanna",
+            "chamber": "house",
+            "notes": "High frequency trader (13k+ trades)"
+        },
+        {
+            "name": "Warren Davidson",
+            "chamber": "house",
+            "notes": "Top performer 2025 (+78.8% return)"
+        },
+        {
+            "name": "Donald Norcross",
+            "chamber": "house",
+            "notes": "Elite performer 2025 (+70.8% return)"
+        },
+        {
+            "name": "Terri Sewell",
+            "chamber": "house",
+            "notes": "Elite performer 2025 (+67.9% return)"
+        },
+        {
+            "name": "Bryan Steil",
+            "chamber": "house",
+            "notes": "Elite performer 2025 (+62.5% return)"
+        },
+        {
+            "name": "Alex Padilla",
+            "chamber": "senate",
+            "notes": "Top Senate performer 2025 (+61.7% return)"
+        },
+        {
+            "name": "Nick LaLota",
+            "chamber": "house",
+            "notes": "Elite performer 2025 (+61.5% return)"
+        },
+        {
+            "name": "Rick Scott",
+            "chamber": "senate",
+            "notes": "Top Senate performer 2025 (+54.8% return)"
+        },
+        {
+            "name": "Michael Guest",
+            "chamber": "house",
+            "notes": "Consistent alpha 2025 (+52.5% return)"
+        },
+        {
+            "name": "Tom McClintock",
+            "chamber": "house",
+            "notes": "Elite performer 2025 (+50.0% return)"
+        },
+        {
+            "name": "Dwight Evans",
+            "chamber": "house",
+            "notes": "Top Democrat 2025 (+41.9% return)"
+        }
+    ]
+}
