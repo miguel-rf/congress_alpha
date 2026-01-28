@@ -41,6 +41,8 @@ export default function SettingsPage() {
     const [csrftoken, setCsrftoken] = useState("");
     const [sessionid, setSessionid] = useState("");
     const [cookieLoading, setCookieLoading] = useState(false);
+    const [rawJson, setRawJson] = useState("");
+    const [cookieMode, setCookieMode] = useState<"simple" | "json">("simple");
 
     // Add politician form
     const [politicianName, setPoliticianName] = useState("");
@@ -71,19 +73,32 @@ export default function SettingsPage() {
 
     const handleUpdateCookies = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!csrftoken || !sessionid) {
-            setMessage({ type: "error", text: "Both cookies are required" });
-            return;
+
+        if (cookieMode === "simple") {
+            if (!csrftoken || !sessionid) {
+                setMessage({ type: "error", text: "Both cookies are required" });
+                return;
+            }
+        } else {
+            if (!rawJson) {
+                setMessage({ type: "error", text: "JSON content is required" });
+                return;
+            }
         }
 
         setCookieLoading(true);
         setMessage(null);
 
         try {
-            const result = await actionsApi.updateCookies(csrftoken, sessionid);
+            const result = await actionsApi.updateCookies(
+                cookieMode === "simple" ? csrftoken : undefined,
+                cookieMode === "simple" ? sessionid : undefined,
+                cookieMode === "json" ? rawJson : undefined
+            );
             setMessage({ type: "success", text: result.message });
             setCsrftoken("");
             setSessionid("");
+            setRawJson("");
             loadData();
         } catch (error) {
             setMessage({ type: "error", text: error instanceof Error ? error.message : "Failed to update cookies" });
@@ -215,38 +230,81 @@ export default function SettingsPage() {
                         )}
                     </div>
 
+                    <div className="cookie-tabs" style={{ marginBottom: "1rem" }}>
+                        <button
+                            className={`toggle-btn ${cookieMode === "simple" ? "active" : ""}`}
+                            onClick={() => setCookieMode("simple")}
+                            style={{ marginRight: "10px" }}
+                        >
+                            Simple (Session ID)
+                        </button>
+                        <button
+                            className={`toggle-btn ${cookieMode === "json" ? "active" : ""}`}
+                            onClick={() => setCookieMode("json")}
+                        >
+                            Advanced (Raw JSON)
+                        </button>
+                    </div>
+
                     <form onSubmit={handleUpdateCookies} className="cookie-form">
                         <div className="cookie-instructions">
                             <p><strong>To update cookies:</strong></p>
                             <ol>
                                 <li>Open <a href="https://efdsearch.senate.gov/search/" target="_blank" rel="noopener noreferrer">efdsearch.senate.gov</a></li>
                                 <li>Complete the CAPTCHA/checkbox</li>
-                                <li>Open DevTools (F12) → Application → Cookies</li>
-                                <li>Copy the cookie values below</li>
+                                {cookieMode === "simple" ? (
+                                    <>
+                                        <li>Open DevTools (F12) → Application → Cookies</li>
+                                        <li>Copy the cookie values below</li>
+                                    </>
+                                ) : (
+                                    <>
+                                        <li>Use an extension like "EditThisCookie" to export as JSON</li>
+                                        <li>Or paste the full cookie array from DevTools</li>
+                                    </>
+                                )}
                             </ol>
                         </div>
-                        <div className="form-group">
-                            <label htmlFor="csrftoken">csrftoken</label>
-                            <input
-                                id="csrftoken"
-                                type="text"
-                                value={csrftoken}
-                                onChange={(e) => setCsrftoken(e.target.value)}
-                                placeholder="Enter csrftoken value"
-                                className="input"
-                            />
-                        </div>
-                        <div className="form-group">
-                            <label htmlFor="sessionid">sessionid</label>
-                            <input
-                                id="sessionid"
-                                type="text"
-                                value={sessionid}
-                                onChange={(e) => setSessionid(e.target.value)}
-                                placeholder="Enter sessionid value"
-                                className="input"
-                            />
-                        </div>
+
+                        {cookieMode === "simple" ? (
+                            <>
+                                <div className="form-group">
+                                    <label htmlFor="csrftoken">csrftoken</label>
+                                    <input
+                                        id="csrftoken"
+                                        type="text"
+                                        value={csrftoken}
+                                        onChange={(e) => setCsrftoken(e.target.value)}
+                                        placeholder="Enter csrftoken value"
+                                        className="input"
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="sessionid">sessionid</label>
+                                    <input
+                                        id="sessionid"
+                                        type="text"
+                                        value={sessionid}
+                                        onChange={(e) => setSessionid(e.target.value)}
+                                        placeholder="Enter sessionid value"
+                                        className="input"
+                                    />
+                                </div>
+                            </>
+                        ) : (
+                            <div className="form-group">
+                                <label htmlFor="rawJson">Raw Cookies JSON</label>
+                                <textarea
+                                    id="rawJson"
+                                    value={rawJson}
+                                    onChange={(e) => setRawJson(e.target.value)}
+                                    placeholder='[{"name": "csrftoken", "value": "..."}]'
+                                    className="input"
+                                    style={{ minHeight: "150px", fontFamily: "monospace" }}
+                                />
+                            </div>
+                        )}
+
                         <button type="submit" className="btn btn-primary" disabled={cookieLoading}>
                             {cookieLoading ? "Updating..." : "Update Cookies"}
                         </button>

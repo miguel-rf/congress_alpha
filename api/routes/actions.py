@@ -224,8 +224,9 @@ async def stop_tasks():
 
 class CookieUpdate(BaseModel):
     """Cookie update request model."""
-    csrftoken: str
-    sessionid: str
+    csrftoken: Optional[str] = None
+    sessionid: Optional[str] = None
+    raw_json: Optional[str] = None
 
 
 @router.get("/cookies")
@@ -276,20 +277,37 @@ async def update_cookies(cookies: CookieUpdate):
     
     cookies_path = Path(__file__).parent.parent.parent / "config" / "cookies.json"
     
-    data = {
-        "_comment": "Senate website authentication cookies - Extract from browser after solving CAPTCHA",
-        "_instructions": [
-            "1. Open https://efdsearch.senate.gov/search/ in your browser",
-            "2. Complete the CAPTCHA/checkbox challenge",
-            "3. Open Developer Tools (F12) -> Application -> Cookies",
-            "4. Copy the cookie values below",
-            "5. Cookies typically expire after a session, refresh as needed"
-        ],
-        "cookies": [
-            {"name": "csrftoken", "value": cookies.csrftoken},
-            {"name": "sessionid", "value": cookies.sessionid},
-        ]
-    }
+    # If raw JSON provided, try to parse and save it directly
+    if cookies.raw_json:
+        try:
+            parsed = json.loads(cookies.raw_json)
+            
+            # Handle list of cookies (from EditThisCookie or DevTools)
+            cookie_list = []
+            if isinstance(parsed, list):
+                cookie_list = parsed
+            elif isinstance(parsed, dict) and 'cookies' in parsed:
+                cookie_list = parsed['cookies']
+            else:
+                # Assume simple key-value dict
+                cookie_list = [{'name': k, 'value': v} for k, v in parsed.items()]
+            
+            data = {
+                "_comment": "Senate website authentication cookies",
+                "cookies": cookie_list
+            }
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON format")
+    elif cookies.csrftoken and cookies.sessionid:
+        data = {
+            "_comment": "Senate website authentication cookies",
+            "cookies": [
+                {"name": "csrftoken", "value": cookies.csrftoken},
+                {"name": "sessionid", "value": cookies.sessionid},
+            ]
+        }
+    else:
+        raise HTTPException(status_code=400, detail="Must provide csrftoken/sessionid OR raw_json")
     
     with open(cookies_path, "w") as f:
         json.dump(data, f, indent=4)

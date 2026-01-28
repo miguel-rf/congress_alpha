@@ -136,10 +136,10 @@ export const actionsApi = {
         has_sessionid: boolean;
     }>("/api/actions/cookies"),
 
-    updateCookies: (csrftoken: string, sessionid: string) =>
+    updateCookies: (csrftoken?: string, sessionid?: string, raw_json?: string) =>
         request<{ success: boolean; message: string }>("/api/actions/cookies", {
             method: "POST",
-            body: JSON.stringify({ csrftoken, sessionid }),
+            body: JSON.stringify({ csrftoken, sessionid, raw_json }),
         }),
 
     // Scheduler settings
