@@ -156,7 +156,7 @@ class AdaptiveScheduler:
 class CongressAlphaPipeline:
     """Main orchestrator for the copy-trading pipeline."""
     
-    def __init__(self):
+    def __init__(self, setup_signals: bool = True):
         self.config = get_config()
         self.db = init_db()
         self.whitelist = WhitelistManager()
@@ -166,7 +166,12 @@ class CongressAlphaPipeline:
         self.trade_executor = TradeExecutor()
         
         self._running = True
-        self._setup_signal_handlers()
+        
+        # Only setup signal handlers if in main thread
+        if setup_signals:
+            import threading
+            if threading.current_thread() is threading.main_thread():
+                self._setup_signal_handlers()
     
     def _setup_signal_handlers(self) -> None:
         """Setup graceful shutdown handlers."""
