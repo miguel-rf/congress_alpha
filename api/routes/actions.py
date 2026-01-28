@@ -53,11 +53,11 @@ def _run_scrape_cycle():
         result = pipeline.run_scrape_cycle()
         
         db = get_db()
-        db.log("INFO", "actions", f"Scrape cycle completed: {result}")
+        db.log_event("INFO", "actions", f"Scrape cycle completed: {result}")
         
     except Exception as e:
         db = get_db()
-        db.log("ERROR", "actions", f"Scrape cycle failed: {e}")
+        db.log_event("ERROR", "actions", f"Scrape cycle failed: {e}")
     finally:
         _running_tasks["scraper"] = False
 
@@ -74,11 +74,11 @@ def _run_trade_cycle():
         result = pipeline.run_trade_cycle()
         
         db = get_db()
-        db.log("INFO", "actions", f"Trade cycle completed: {len(result)} trades")
+        db.log_event("INFO", "actions", f"Trade cycle completed: {len(result)} trades")
         
     except Exception as e:
         db = get_db()
-        db.log("ERROR", "actions", f"Trade cycle failed: {e}")
+        db.log_event("ERROR", "actions", f"Trade cycle failed: {e}")
     finally:
         _running_tasks["trader"] = False
 
@@ -96,11 +96,11 @@ def _run_full_cycle():
         pipeline.run_cycle()
         
         db = get_db()
-        db.log("INFO", "actions", "Full cycle completed")
+        db.log_event("INFO", "actions", "Full cycle completed")
         
     except Exception as e:
         db = get_db()
-        db.log("ERROR", "actions", f"Full cycle failed: {e}")
+        db.log_event("ERROR", "actions", f"Full cycle failed: {e}")
     finally:
         _running_tasks["scraper"] = False
         _running_tasks["trader"] = False
@@ -136,7 +136,7 @@ async def trigger_scrape(background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_scrape_cycle)
     
     db = get_db()
-    db.log("INFO", "actions", "Scrape cycle triggered via API")
+    db.log_event("INFO", "actions", "Scrape cycle triggered via API")
     
     return ActionResponse(
         success=True,
@@ -162,7 +162,7 @@ async def trigger_trade(background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_trade_cycle)
     
     db = get_db()
-    db.log("INFO", "actions", "Trade cycle triggered via API")
+    db.log_event("INFO", "actions", "Trade cycle triggered via API")
     
     return ActionResponse(
         success=True,
@@ -188,7 +188,7 @@ async def trigger_full_cycle(background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_full_cycle)
     
     db = get_db()
-    db.log("INFO", "actions", "Full cycle triggered via API")
+    db.log_event("INFO", "actions", "Full cycle triggered via API")
     
     return ActionResponse(
         success=True,
@@ -210,7 +210,7 @@ async def stop_tasks():
     was_running = _running_tasks["scraper"] or _running_tasks["trader"]
     
     db = get_db()
-    db.log("WARNING", "actions", "Stop requested via API")
+    db.log_event("WARNING", "actions", "Stop requested via API")
     
     return ActionResponse(
         success=True,
@@ -295,7 +295,7 @@ async def update_cookies(cookies: CookieUpdate):
         json.dump(data, f, indent=4)
     
     db = get_db()
-    db.log("INFO", "actions", "Senate cookies updated via API")
+    db.log_event("INFO", "actions", "Senate cookies updated via API")
     
     return ActionResponse(
         success=True,
@@ -404,7 +404,7 @@ async def cleanup_old_logs():
     db = get_db()
     
     # This would need implementation in db_manager
-    db.log("INFO", "actions", "Database cleanup requested")
+    db.log_event("INFO", "actions", "Database cleanup requested")
     
     return ActionResponse(
         success=True,
