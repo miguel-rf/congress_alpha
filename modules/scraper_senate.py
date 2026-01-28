@@ -255,10 +255,18 @@ class SenateScraper:
             'order[0][dir]': 'desc',
         }
         
+        # Add CSRF token to headers if available
+        headers = {}
+        csrf_token = self.session.cookies.get('csrftoken')
+        if csrf_token:
+            headers['X-CSRFToken'] = csrf_token
+            # scraper_logger.debug(f"Added X-CSRFToken header: {csrf_token[:10]}...")
+
         try:
             response = self.session.post(
                 SEARCH_API_URL,
                 data=payload,
+                headers=headers,
                 timeout=30
             )
             response.raise_for_status()
