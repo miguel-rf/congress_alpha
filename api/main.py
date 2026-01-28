@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import signals, trades, portfolio, politicians, system
+from api.routes import signals, trades, portfolio, politicians, system, actions
 
 
 @asynccontextmanager
@@ -50,6 +50,7 @@ app.include_router(trades.router, prefix="/api/trades", tags=["Trades"])
 app.include_router(portfolio.router, prefix="/api/portfolio", tags=["Portfolio"])
 app.include_router(politicians.router, prefix="/api/politicians", tags=["Politicians"])
 app.include_router(system.router, prefix="/api", tags=["System"])
+app.include_router(actions.router, prefix="/api/actions", tags=["Actions"])
 
 
 @app.get("/", tags=["Health"])

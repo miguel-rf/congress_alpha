@@ -115,3 +115,57 @@ export const systemApi = {
 export const healthApi = {
     check: () => request<{ status: string }>("/health"),
 };
+
+// Actions API - Control scraper and trading from dashboard
+export const actionsApi = {
+    getStatus: () => request<{ scraper_running: boolean; trader_running: boolean }>("/api/actions/status"),
+
+    triggerScrape: () => request<{ success: boolean; message: string; task_id?: string }>("/api/actions/scrape", { method: "POST" }),
+
+    triggerTrade: () => request<{ success: boolean; message: string; task_id?: string }>("/api/actions/trade", { method: "POST" }),
+
+    triggerFullCycle: () => request<{ success: boolean; message: string; task_id?: string }>("/api/actions/cycle", { method: "POST" }),
+
+    stopTasks: () => request<{ success: boolean; message: string }>("/api/actions/stop", { method: "POST" }),
+
+    // Cookie management
+    getCookiesStatus: () => request<{
+        configured: boolean;
+        last_modified: string | null;
+        has_csrftoken: boolean;
+        has_sessionid: boolean;
+    }>("/api/actions/cookies"),
+
+    updateCookies: (csrftoken: string, sessionid: string) =>
+        request<{ success: boolean; message: string }>("/api/actions/cookies", {
+            method: "POST",
+            body: JSON.stringify({ csrftoken, sessionid }),
+        }),
+
+    // Scheduler settings
+    getSchedulerSettings: () => request<{
+        market_open_hour: number;
+        market_close_hour: number;
+        market_hours_min_interval: number;
+        market_hours_max_interval: number;
+        off_hours_interval: number;
+        jitter_min: number;
+        jitter_max: number;
+    }>("/api/actions/scheduler/settings"),
+
+    // Full system health
+    getFullHealth: () => request<{
+        status: string;
+        components: {
+            trading212: { configured: boolean; environment: string };
+            openrouter: { configured: boolean; model: string };
+            database: { exists: boolean; size_mb: number; signals: number; trades: number };
+            cookies: { configured: boolean };
+            whitelist: { configured: boolean };
+        };
+        running_tasks: { scraper: boolean; trader: boolean };
+    }>("/api/actions/health/full"),
+
+    // Database cleanup
+    cleanupDatabase: () => request<{ success: boolean; message: string }>("/api/actions/database/cleanup", { method: "POST" }),
+};

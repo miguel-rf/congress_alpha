@@ -2,8 +2,9 @@
 
 import { useCallback, useState, useEffect } from "react";
 import { usePolling, formatRelativeTime } from "@/lib/usePolling";
-import { signalsApi, tradesApi, politiciansApi, systemApi } from "@/lib/api";
+import { signalsApi, tradesApi, politiciansApi, systemApi, actionsApi } from "@/lib/api";
 import type { SystemStats, TradeStats, TradeSignal, Politician } from "@/lib/types";
+import ControlPanel from "./ControlPanel";
 
 // Polling interval: 30 seconds
 const POLL_INTERVAL = 30000;
@@ -13,13 +14,14 @@ export default function DashboardClient() {
 
     // Poll dashboard data
     const fetchDashboardData = useCallback(async () => {
-        const [stats, tradeStats, pendingSignals, politicians] = await Promise.all([
+        const [stats, tradeStats, pendingSignals, politicians, actionStatus] = await Promise.all([
             systemApi.getStats().catch(() => null),
             tradesApi.getStats().catch(() => null),
             signalsApi.getPending().catch(() => []),
             politiciansApi.list().catch(() => []),
+            actionsApi.getStatus().catch(() => null),
         ]);
-        return { stats, tradeStats, pendingSignals, politicians };
+        return { stats, tradeStats, pendingSignals, politicians, actionStatus };
     }, []);
 
     const { data, isLoading, isRefreshing, lastUpdated, refresh } = usePolling(
@@ -39,6 +41,7 @@ export default function DashboardClient() {
     const tradeStats = data?.tradeStats;
     const pendingSignals = data?.pendingSignals ?? [];
     const politicians = data?.politicians ?? [];
+    const actionStatus = data?.actionStatus ?? null;
 
     if (isLoading) {
         return <DashboardSkeleton />;
@@ -59,6 +62,9 @@ export default function DashboardClient() {
                     />
                 </div>
             </header>
+
+            {/* Control Panel */}
+            <ControlPanel actionStatus={actionStatus} onActionComplete={refresh} />
 
             {/* Stats Grid */}
             <div className="stats-grid">
@@ -81,6 +87,7 @@ export default function DashboardClient() {
                 />
                 <StatCard label="Politicians Tracked" value={politicians.length} />
             </div>
+
 
             <div className="content-grid">
                 {/* Pending Signals */}

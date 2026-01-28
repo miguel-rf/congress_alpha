@@ -256,7 +256,7 @@ python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
 
 If you configured the firewall:
 ```
-http://YOUR_PUBLIC_IP:8000
+http://143.47.45.64:8000
 ```
 
 ---
