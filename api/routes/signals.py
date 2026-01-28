@@ -85,7 +85,7 @@ async def list_signals(
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
         
         # Get total count
-        cursor.execute(f"SELECT COUNT(*) FROM trade_signals {where_sql}", params)
+        cursor.execute(f"SELECT COUNT(*) FROM trades {where_sql}", params)
         total = cursor.fetchone()[0]
         
         # Calculate pagination
@@ -98,7 +98,7 @@ async def list_signals(
             SELECT id, ticker, politician, trade_type, amount_midpoint,
                    trade_date, disclosure_date, lag_days, signal_type,
                    chamber, asset_name, pdf_url, processed, created_at
-            FROM trade_signals
+            FROM trades
             {where_sql}
             ORDER BY created_at DESC
             LIMIT ? OFFSET ?
@@ -174,7 +174,7 @@ async def get_signal(signal_id: int):
             SELECT id, ticker, politician, trade_type, amount_midpoint,
                    trade_date, disclosure_date, lag_days, signal_type,
                    chamber, asset_name, pdf_url, processed, created_at
-            FROM trade_signals
+            FROM trades
             WHERE id = ?
             """,
             (signal_id,)
@@ -210,7 +210,7 @@ async def mark_signal_processed(signal_id: int):
     # Check if signal exists
     with db.get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM trade_signals WHERE id = ?", (signal_id,))
+        cursor.execute("SELECT id FROM trades WHERE id = ?", (signal_id,))
         if not cursor.fetchone():
             raise HTTPException(status_code=404, detail="Signal not found")
     
