@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import sqlite3
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -963,8 +964,54 @@ class TradeExecutor:
         
         return result
     
+    def reject_orphan_sells(self) -> int:
+        """
+        Reject all SELL signals where we don't own the position.
+        Returns count of rejected signals.
+        """
+        rejected_count = 0
+        
+        # Get all pending/pending_confirmation SELL signals
+        with self.db.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute("""
+                SELECT id, ticker, politician FROM trades 
+                WHERE trade_type = 'sale' 
+                AND status IN ('pending', 'pending_confirmation')
+                AND processed = 0
+            """)
+            sell_signals = cursor.fetchall()
+        
+        for signal in sell_signals:
+            ticker = signal['ticker']
+            politician = signal['politician']
+            signal_id = signal['id']
+            
+            # Check if we own this position
+            position = self.get_position(ticker)
+            
+            # Also check for proxy trades (ETF bought for this stock)
+            proxy = self.db.get_open_proxy_trade(ticker, politician)
+            
+            if not position and not proxy:
+                # No position and no proxy - reject this sell signal
+                self.db.set_signal_status(signal_id, 'rejected')
+                self.db.mark_signal_processed(signal_id)
+                trade_logger.info(
+                    f"Auto-rejected SELL {ticker}: no position owned"
+                )
+                rejected_count += 1
+        
+        if rejected_count > 0:
+            trade_logger.info(f"Rejected {rejected_count} orphan SELL signals")
+        
+        return rejected_count
+    
     def process_pending_signals(self) -> list[TradeResult]:
         """Process all pending trade signals (excluding those awaiting confirmation)."""
+        # First, reject any SELL signals for stocks we don't own
+        self.reject_orphan_sells()
+        
         signals = self.db.get_unprocessed_signals()
         trade_logger.info(f"Processing {len(signals)} pending signals")
         

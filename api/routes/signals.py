@@ -345,3 +345,26 @@ async def delete_all_signals(
         "message": f"Deleted {count} signals",
         "deleted_count": count
     }
+
+
+@router.post("/reject-orphan-sells")
+async def reject_orphan_sells():
+    """
+    Automatically reject all SELL signals where we don't own the position.
+    
+    This scans all pending SELL signals and rejects those that cannot be executed
+    because we don't own the stock (either directly or via a proxy ETF trade).
+    """
+    try:
+        from modules.trade_executor import TradeExecutor
+        
+        executor = TradeExecutor()
+        rejected_count = executor.reject_orphan_sells()
+        
+        return {
+            "status": "success",
+            "message": f"Rejected {rejected_count} orphan SELL signals",
+            "rejected_count": rejected_count
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reject orphan sells: {str(e)}")
