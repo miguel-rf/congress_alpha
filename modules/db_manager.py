@@ -43,6 +43,9 @@ class TradeSignal:
     id: Optional[int] = None
     created_at: Optional[str] = None
     processed: bool = False
+    # Additional fields for options trades (not stored in DB, for display only)
+    is_options: bool = False
+    owner: Optional[str] = None  # Self, Spouse, Joint, etc.
 
 
 @dataclass

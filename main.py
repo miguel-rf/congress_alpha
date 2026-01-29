@@ -282,12 +282,16 @@ class CongressAlphaPipeline:
                     if not tx.ticker or not tx.trade_type:
                         continue
                     
+                    # Use notification_date as disclosure_date if available
+                    disclosure_date = tx.notification_date or today
+                    
                     # Calculate lag days
                     lag_days = 0
                     if tx.trade_date:
                         try:
                             trade_dt = datetime.strptime(tx.trade_date, "%Y-%m-%d")
-                            lag_days = (datetime.now() - trade_dt).days
+                            disclosure_dt = datetime.strptime(disclosure_date, "%Y-%m-%d")
+                            lag_days = (disclosure_dt - trade_dt).days
                         except ValueError:
                             lag_days = 30  # Default if parsing fails
                     
@@ -300,12 +304,14 @@ class CongressAlphaPipeline:
                         trade_type=tx.trade_type,  # 'purchase' or 'sale'
                         amount_midpoint=tx.amount_midpoint or 10000.0,
                         trade_date=tx.trade_date or today,
-                        disclosure_date=today,
+                        disclosure_date=disclosure_date,
                         lag_days=lag_days,
                         signal_type=signal_type,
                         chamber=chamber,
                         asset_name=tx.asset_name,
                         pdf_url=str(pdf_path),
+                        is_options=tx.is_options,
+                        owner=tx.owner,
                     )
                     
                     # Check if signal already exists (deduplication)

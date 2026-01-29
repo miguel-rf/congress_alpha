@@ -57,6 +57,14 @@ class ExtractedTransaction:
     amount_midpoint: float
     owner: Optional[str]  # Self, Spouse, Joint, etc.
     confidence: float  # 0.0 to 1.0
+    notification_date: Optional[str] = None  # YYYY-MM-DD - when disclosed
+    is_options: bool = False
+    option_type: Optional[str] = None  # 'call' or 'put'
+    strike_price: Optional[float] = None
+    expiration_date: Optional[str] = None
+    contracts: Optional[int] = None
+    shares: Optional[int] = None
+    is_partial_sale: bool = False
 
 
 # -----------------------------------------------------------------------------
@@ -187,36 +195,85 @@ def extract_text_from_pdf(pdf_path: Path, dpi: int = 300) -> str:
 # -----------------------------------------------------------------------------
 # LLM Parsing with OpenRouter
 # -----------------------------------------------------------------------------
-EXTRACTION_PROMPT = """You are a financial disclosure parser. Extract stock transactions from the following OCR text.
+EXTRACTION_PROMPT = """You are a financial disclosure parser for U.S. Congressional trading disclosures. Extract ALL stock/option transactions from the following OCR text.
+
+The documents typically have a TABLE format with these columns:
+- **ID**: (often empty)
+- **Owner**: Who owns the asset
+  - "SP" = Spouse
+  - "JT" = Joint
+  - "DC" = Dependent Child
+  - "Self" or empty = Self (the member of Congress)
+- **Asset**: Company name with ticker in parentheses, e.g., "Alphabet Inc. - Class A Common Stock (GOOGL) [ST]"
+  - [ST] = Stock
+  - [OP] = Options
+  - [AB] = Asset-backed securities
+  - The ticker is usually in parentheses like (AAPL), (MSFT), (AMZN)
+- **Transaction Type**:
+  - "P" = Purchase
+  - "S" = Sale (full)
+  - "S (partial)" = Sale (partial)
+  - "E" = Exchange
+- **Date**: Transaction date (MM/DD/YYYY format in source)
+- **Notification Date**: Filing date (MM/DD/YYYY format in source)
+- **Amount**: Dollar range like "$1,000,001 - $5,000,000"
+- **Description**: Additional details like "Purchased 25,000 shares" or option details like "Purchased 20 call options with a strike price of $150 and an expiration date of 1/15/27"
 
 For each transaction, extract:
-1. **Ticker**: The stock symbol (e.g., AAPL, MSFT). If the ticker is unclear or handwritten (e.g., "Facebk", "Amzn"), infer the correct ticker from the asset name.
-2. **Asset Name**: Full name of the company/asset
-3. **Type**: Either "purchase" or "sale"
-4. **Date**: Transaction date in YYYY-MM-DD format
-5. **Amount**: The dollar range (e.g., "$15,001 - $50,000")
-6. **Owner**: Who made the trade (Self, Spouse, Joint, Child)
+1. **ticker**: The stock symbol from parentheses (e.g., GOOGL from "Alphabet Inc. (GOOGL)")
+2. **asset_name**: Full name of the company/asset
+3. **trade_type**: "purchase" (if P) or "sale" (if S or S (partial))
+4. **trade_date**: Transaction date in YYYY-MM-DD format
+5. **notification_date**: Filing/notification date in YYYY-MM-DD format
+6. **amount**: The dollar range exactly as shown (e.g., "$1,000,001 - $5,000,000")
+7. **owner**: Expanded form: "Spouse", "Self", "Joint", or "Dependent Child"
+8. **is_options**: true if this is an options trade ([OP] or mentions "call options"/"put options"), false otherwise
+9. **option_details**: If options, extract: strike_price, expiration_date, option_type (call/put), contracts
+10. **shares**: Number of shares if mentioned in description
+11. **is_partial_sale**: true if "S (partial)", false otherwise
 
 Common ticker corrections:
-- "Facebk" or "Facebook" → META
-- "Amzn" or "Amazon" → AMZN
-- "Alphabet" or "Google" → GOOGL
+- "Facebook" → META
+- "Amazon" or "Amazon.com" → AMZN
+- "Alphabet" or "Google" → GOOGL (Class A) or GOOG (Class C)
 - "Microsoft" → MSFT
 - "Apple" → AAPL
-- "Nvidia" → NVDA
+- "Nvidia" or "NVIDIA" → NVDA
 - "Tesla" → TSLA
+- "AllianceBernstein" → AB
 
-Return ONLY valid JSON array. If no transactions found, return [].
+Return ONLY valid JSON array. Extract ALL transactions from the document. If no transactions found, return [].
 
-Example output:
+Example output for the data in the OCR:
 [
   {{
-    "ticker": "AAPL",
-    "asset_name": "Apple Inc.",
+    "ticker": "AB",
+    "asset_name": "AllianceBernstein Holding L.P. Units",
     "trade_type": "purchase",
-    "trade_date": "2024-01-15",
-    "amount": "$15,001 - $50,000",
-    "owner": "Self"
+    "trade_date": "2026-01-16",
+    "notification_date": "2026-01-16",
+    "amount": "$1,000,001 - $5,000,000",
+    "owner": "Spouse",
+    "is_options": false,
+    "shares": 25000,
+    "is_partial_sale": false
+  }},
+  {{
+    "ticker": "GOOGL",
+    "asset_name": "Alphabet Inc. - Class A Common Stock",
+    "trade_type": "purchase",
+    "trade_date": "2025-12-30",
+    "notification_date": "2025-12-30",
+    "amount": "$250,001 - $500,000",
+    "owner": "Spouse",
+    "is_options": true,
+    "option_details": {{
+      "option_type": "call",
+      "strike_price": 150,
+      "expiration_date": "2027-01-15",
+      "contracts": 20
+    }},
+    "is_partial_sale": false
   }}
 ]
 
@@ -347,8 +404,17 @@ def _normalize_transaction_keys(tx: dict) -> dict:
         'asset_name': ['asset_name', 'asset', 'name', 'company', 'description'],
         'trade_type': ['trade_type', 'type', 'transaction_type', 'action'],
         'trade_date': ['trade_date', 'date', 'transaction_date'],
+        'notification_date': ['notification_date', 'filing_date', 'disclosure_date', 'filed_date'],
         'amount': ['amount', 'value', 'amount_range', 'transaction_amount'],
         'owner': ['owner', 'holder', 'beneficial_owner'],
+        'is_options': ['is_options', 'options', 'is_option'],
+        'option_details': ['option_details', 'options_details'],
+        'option_type': ['option_type'],
+        'strike_price': ['strike_price', 'strike'],
+        'expiration_date': ['expiration_date', 'expiration', 'expiry'],
+        'contracts': ['contracts', 'num_contracts', 'contract_count'],
+        'shares': ['shares', 'share_count', 'num_shares', 'quantity'],
+        'is_partial_sale': ['is_partial_sale', 'partial_sale', 'partial'],
     }
     
     # Normalize keys: strip whitespace, lowercase, remove extra quotes
@@ -470,21 +536,59 @@ def process_pdf(pdf_path: Path) -> list[ExtractedTransaction]:
             
             # Normalize trade type
             trade_type = tx.get('trade_type', '').lower()
-            if trade_type in ['buy', 'purchased', 'bought']:
+            if trade_type in ['buy', 'purchased', 'bought', 'p']:
                 trade_type = 'purchase'
-            elif trade_type in ['sell', 'sold']:
+            elif trade_type in ['sell', 'sold', 's', 's (partial)']:
                 trade_type = 'sale'
+            
+            # Normalize owner
+            owner = tx.get('owner', 'Self')
+            owner_map = {
+                'sp': 'Spouse',
+                'jt': 'Joint',
+                'dc': 'Dependent Child',
+                'self': 'Self',
+                '': 'Self',
+            }
+            owner = owner_map.get(owner.lower().strip(), owner)
+            
+            # Extract option details if present
+            is_options = tx.get('is_options', False)
+            option_details = tx.get('option_details', {}) or {}
+            option_type = option_details.get('option_type') if isinstance(option_details, dict) else None
+            strike_price = option_details.get('strike_price') if isinstance(option_details, dict) else None
+            expiration_date = option_details.get('expiration_date') if isinstance(option_details, dict) else None
+            contracts = option_details.get('contracts') if isinstance(option_details, dict) else None
+            
+            # Parse shares count
+            shares = tx.get('shares')
+            if isinstance(shares, str):
+                # Extract number from string like "25,000"
+                shares_match = re.search(r'[\d,]+', shares.replace(',', ''))
+                shares = int(shares_match.group().replace(',', '')) if shares_match else None
+            elif isinstance(shares, (int, float)):
+                shares = int(shares)
+            else:
+                shares = None
             
             transaction = ExtractedTransaction(
                 ticker=tx.get('ticker', '').upper(),
                 asset_name=tx.get('asset_name'),
                 trade_type=trade_type,
                 trade_date=tx.get('trade_date'),
+                notification_date=tx.get('notification_date'),
                 amount_low=low,
                 amount_high=high,
                 amount_midpoint=midpoint,
-                owner=tx.get('owner'),
-                confidence=0.8,  # Default confidence for LLM extraction
+                owner=owner,
+                confidence=0.85 if is_options else 0.9,  # Slightly lower confidence for options
+                is_options=is_options,
+                option_type=option_type,
+                strike_price=float(strike_price) if strike_price else None,
+                expiration_date=expiration_date,
+                contracts=int(contracts) if contracts else None,
+                shares=shares,
+                is_partial_sale=tx.get('is_partial_sale', False),
             )
             
             # Validate required fields
@@ -533,30 +637,47 @@ if __name__ == "__main__":
     
     logging.basicConfig(level=logging.DEBUG)
     
-    # Test with a sample text
+    # Test with sample text matching actual Congressional disclosure format
     sample_text = """
-    PERIODIC TRANSACTION REPORT
-    
-    Filer: John Smith
-    Filing Date: 01/15/2024
-    
     TRANSACTIONS
     
-    Asset: Apple Inc (AAPL)
-    Type: Purchase
-    Date: 01/10/2024
-    Amount: $15,001 - $50,000
-    Owner: Self
+    ID  Owner  Asset                                      Transaction  Date        Notification  Amount            Cap.
+                                                          Type                     Date                            Gains >
+                                                                                                                   $200?
     
-    Asset: Microsoft Corporation
-    Type: Sale
-    Date: 01/12/2024
-    Amount: $50,001 - $100,000
-    Owner: Spouse
+        SP     AllianceBernstein Holding L.P. Units       P            01/16/2026  01/16/2026    $1,000,001 -
+               (AB) [AB]                                                                          $5,000,000
+               FILING STATUS: New
+               DESCRIPTION: Purchased 25,000 shares.
+    
+        SP     Alphabet Inc. - Class A Common             P            01/16/2026  01/16/2026    $500,001 -
+               Stock (GOOGL) [ST]                                                                 $1,000,000
+               FILING STATUS: New
+               DESCRIPTION: Exercised 50 call options purchased 1/14/25 (5,000 shares) at a strike price of $150 with an expiration date of 1/16/26.
+    
+        SP     Alphabet Inc. - Class A Common             P            12/30/2025  12/30/2025    $250,001 -
+               Stock (GOOGL) [OP]                                                                 $500,000
+               FILING STATUS: New
+               DESCRIPTION: Purchased 20 call options with a strike price of $150 and an expiration date of 1/15/27.
+    
+        SP     Alphabet Inc. - Class A Common             S (partial)  12/30/2025  12/30/2025    $1,000,001 -
+               Stock (GOOGL) [ST]                                                                 $5,000,000
+               FILING STATUS: New
+               DESCRIPTION: Contribution of 7,704 shares held personally to Donor-Advised Fund.
+    
+        SP     Amazon.com, Inc. - Common Stock            P            12/30/2025  12/30/2025    $100,001 -
+               (AMZN) [OP]                                                                        $250,000
+               FILING STATUS: New
+               DESCRIPTION: Purchased 20 call options with a strike price of $120 and an expiration date of 1/15/27.
+    
+        SP     Amazon.com, Inc. - Common Stock            S (partial)  12/24/2025  12/24/2025    $1,000,001 -
+               (AMZN) [ST]                                                                        $5,000,000
     """
     
-    print("Testing LLM parsing...")
+    print("Testing LLM parsing with Congressional disclosure format...")
     transactions = parse_with_llm_sync(sample_text)
-    print(f"Extracted {len(transactions)} transactions:")
+    print(f"\nExtracted {len(transactions)} transactions:")
     for tx in transactions:
         print(f"  - {tx}")
+        if tx.get('is_options'):
+            print(f"    -> OPTIONS: {tx.get('option_details')}")
