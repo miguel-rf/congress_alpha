@@ -67,14 +67,20 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
 fi
 
 # Check for virtual environment
-if [ ! -d "$SCRIPT_DIR/.venv" ]; then
-    echo -e "${RED}Error: Virtual environment not found. Run ./setup_arm64.sh first.${NC}"
+if [ -d "$SCRIPT_DIR/venv" ]; then
+    VENV_DIR="$SCRIPT_DIR/venv"
+elif [ -d "$SCRIPT_DIR/.venv" ]; then
+    VENV_DIR="$SCRIPT_DIR/.venv"
+else
+    echo -e "${RED}Error: Virtual environment not found.${NC}"
+    echo -e "${YELLOW}Create one with: python -m venv venv && ./venv/bin/pip install -r requirements.txt${NC}"
+    echo -e "${YELLOW}Then install Playwright: ./venv/bin/python -m playwright install chromium${NC}"
     exit 1
 fi
 
 # Activate virtual environment
 echo -e "${BLUE}Activating Python virtual environment...${NC}"
-source "$SCRIPT_DIR/.venv/bin/activate"
+source "$VENV_DIR/bin/activate"
 
 # Check if node_modules exists for UI
 if [ ! -d "$SCRIPT_DIR/ui/node_modules" ]; then

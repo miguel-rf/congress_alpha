@@ -106,15 +106,27 @@ class ScrapingConfig:
     senate_url: str = "https://efdsearch.senate.gov/search/"
     senate_search_url: str = "https://efdsearch.senate.gov/search/report/data/"
     
-    # Rate limiting
-    min_delay_seconds: int = 30
-    max_delay_seconds: int = 180
+    # Rate limiting - increased for cloud/datacenter IPs
+    min_delay_seconds: int = 60  # Increased from 30
+    max_delay_seconds: int = 300  # Increased from 180 (5 minutes)
     
-    # User agents for rotation
+    # Retry settings for rate-limited requests
+    max_retries: int = 7
+    base_retry_delay: int = 30
+    max_retry_delay: int = 600  # 10 minutes max wait
+    
+    # User agents for rotation - more variety to avoid fingerprinting
     user_agents: list[str] = field(default_factory=lambda: [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:122.0) Gecko/20100101 Firefox/122.0",
+        "Mozilla/5.0 (X11; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
     ])
 
 

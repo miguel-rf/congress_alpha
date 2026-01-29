@@ -6,6 +6,8 @@ Orchestrates the copy-trading pipeline with adaptive scheduling:
 - Market Hours (09:00-18:00 ET): Every 10-15 minutes (randomized)
 - Off Hours: Every 4 hours
 - Anti-bot protection with randomized delays
+
+Uses Playwright-based scrapers for reliable browser automation.
 """
 from __future__ import annotations
 
@@ -25,17 +27,23 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from config.settings import get_config, CONFIG_DIR, logger
 from modules.db_manager import init_db, get_db, TradeSignal
-from modules.scraper_house import HouseScraper
-from modules.scraper_senate import SenateScraper
 from modules.ocr_engine import process_all_pending_pdfs, ExtractedTransaction
 from modules.trade_executor import TradeExecutor, TradeResult
 
-# Try to import Playwright scraper as fallback
+# Import Playwright scrapers
 try:
-    from modules.scraper_senate_playwright import SenatePlaywrightScraper
-    PLAYWRIGHT_AVAILABLE = True
-except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
+    from modules.scraper_house import HousePlaywrightScraper
+    HOUSE_PLAYWRIGHT_AVAILABLE = True
+except ImportError as e:
+    HOUSE_PLAYWRIGHT_AVAILABLE = False
+    logger.warning(f"House Playwright scraper not available: {e}")
+
+try:
+    from modules.scraper_senate import SenatePlaywrightScraper
+    SENATE_PLAYWRIGHT_AVAILABLE = True
+except ImportError as e:
+    SENATE_PLAYWRIGHT_AVAILABLE = False
+    logger.warning(f"Senate Playwright scraper not available: {e}")
 
 # Module logger
 main_logger = logging.getLogger("congress_alpha.main")
@@ -156,16 +164,27 @@ class AdaptiveScheduler:
 class CongressAlphaPipeline:
     """Main orchestrator for the copy-trading pipeline."""
     
-    def __init__(self, setup_signals: bool = True):
+    def __init__(self, setup_signals: bool = True, headless: bool = True):
         self.config = get_config()
         self.db = init_db()
         self.whitelist = WhitelistManager()
         self.scheduler = AdaptiveScheduler()
-        self.house_scraper = HouseScraper()
-        self.senate_scraper = SenateScraper()
         self.trade_executor = TradeExecutor()
+        self.headless = headless
+        
+        # Initialize Playwright scrapers (created on-demand to manage browser lifecycle)
+        self._house_scraper = None
+        self._senate_scraper = None
         
         self._running = True
+        
+        # Check Playwright availability
+        if not HOUSE_PLAYWRIGHT_AVAILABLE or not SENATE_PLAYWRIGHT_AVAILABLE:
+            main_logger.error(
+                "Playwright scrapers not available. Install with:\n"
+                "  pip install playwright\n"
+                "  playwright install chromium"
+            )
         
         # Only setup signal handlers if in main thread
         if setup_signals:
@@ -201,54 +220,41 @@ class CongressAlphaPipeline:
             main_logger.warning("No politicians in whitelist, skipping scrape")
             return stats
         
-        # --- House Scraping ---
-        main_logger.info("=== House Scraper ===")
-        try:
-            house_filings = self.house_scraper.scrape()
-            stats['house_filings'] = len(house_filings)
-            
-            # Process with filtering and PDF downloads
-            whitelisted_count, pdf_count = self.house_scraper.scrape_and_process(whitelist_names)
-            main_logger.info(
-                f"House: {len(house_filings)} total, "
-                f"{whitelisted_count} whitelisted, {pdf_count} PDFs downloaded"
-            )
-            
-        except Exception as e:
-            main_logger.error(f"House scraper error: {e}")
-        
-        # --- Senate Scraping ---
-        main_logger.info("=== Senate Scraper ===")
-        try:
-            senate_filings = self.senate_scraper.scrape()
-            stats['senate_filings'] = len(senate_filings)
-            
-            # Process with format forking
-            html_count, pdf_count = self.senate_scraper.scrape_and_process(whitelist_names)
-            main_logger.info(
-                f"Senate: {len(senate_filings)} total, "
-                f"{html_count} HTML parsed, {pdf_count} PDFs downloaded"
-            )
-            
-        except Exception as e:
-            main_logger.error(f"Senate cookie scraper error: {e}")
-            
-            # Fallback to Playwright-based scraper
-            if PLAYWRIGHT_AVAILABLE:
-                main_logger.info("Trying Playwright-based Senate scraper...")
-                try:
-                    pw_scraper = SenatePlaywrightScraper(headless=True)
-                    html_count, pdf_count = pw_scraper.scrape_and_process(whitelist_names)
-                    main_logger.info(
-                        f"Senate (Playwright): {html_count} HTML parsed, {pdf_count} PDFs"
-                    )
-                except Exception as pw_err:
-                    main_logger.error(f"Senate Playwright scraper error: {pw_err}")
-            else:
-                main_logger.warning(
-                    "Playwright not available. Install with: "
-                    "pip install playwright && playwright install chromium"
+        # --- House Scraping (Playwright) ---
+        main_logger.info("=== House Scraper (Playwright) ===")
+        if HOUSE_PLAYWRIGHT_AVAILABLE:
+            try:
+                house_scraper = HousePlaywrightScraper(headless=self.headless)
+                whitelisted_count, pdf_count = house_scraper.scrape_and_process(whitelist_names)
+                stats['house_filings'] = whitelisted_count
+                main_logger.info(
+                    f"House: {whitelisted_count} whitelisted filings, {pdf_count} PDFs downloaded"
                 )
+            except Exception as e:
+                main_logger.error(f"House Playwright scraper error: {e}")
+        else:
+            main_logger.error(
+                "House Playwright scraper not available. Install with: "
+                "pip install playwright && playwright install chromium"
+            )
+        
+        # --- Senate Scraping (Playwright) ---
+        main_logger.info("=== Senate Scraper (Playwright) ===")
+        if SENATE_PLAYWRIGHT_AVAILABLE:
+            try:
+                senate_scraper = SenatePlaywrightScraper(headless=self.headless)
+                html_count, pdf_count = senate_scraper.scrape_and_process(whitelist_names)
+                stats['senate_filings'] = html_count + pdf_count
+                main_logger.info(
+                    f"Senate: {html_count} HTML parsed, {pdf_count} PDFs downloaded"
+                )
+            except Exception as e:
+                main_logger.error(f"Senate Playwright scraper error: {e}")
+        else:
+            main_logger.error(
+                "Senate Playwright scraper not available. Install with: "
+                "pip install playwright && playwright install chromium"
+            )
         
         # --- OCR Processing ---
         main_logger.info("=== OCR Processing ===")

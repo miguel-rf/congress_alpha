@@ -328,24 +328,33 @@ async def update_cookies(cookies: CookieUpdate):
 @router.post("/cookies/test")
 async def test_cookies():
     """
-    Test Senate cookies authentication.
+    Test Senate connection using Playwright (no cookies needed).
     """
-    from modules.scraper_senate import SenateScraper
-    
-    scraper = SenateScraper()
-    
-    # Try to fetch search page (lightweight check)
-    html = scraper._fetch_search_page()
-    
-    if html:
-        return ActionResponse(
-            success=True,
-            message="Connection successful! Cookies are valid."
-        )
-    else:
+    try:
+        from modules.scraper_senate import SenatePlaywrightScraper
+        
+        scraper = SenatePlaywrightScraper(headless=True)
+        filings = scraper.scrape()
+        
+        if filings:
+            return ActionResponse(
+                success=True,
+                message=f"Connection successful! Found {len(filings)} filings using Playwright."
+            )
+        else:
+            return ActionResponse(
+                success=True,
+                message="Connection successful! Playwright browser automation working (no filings found)."
+            )
+    except ImportError:
         return ActionResponse(
             success=False,
-            message="Connection failed. Cookies may be expired or invalid."
+            message="Playwright not installed. Run: pip install playwright && playwright install chromium"
+        )
+    except Exception as e:
+        return ActionResponse(
+            success=False,
+            message=f"Connection failed: {str(e)}"
         )
 
 
