@@ -1,8 +1,8 @@
 """
 Congressional Alpha System - Senate Financial Disclosure Scraper
 
-Scrapes financial disclosures from efdsearch.senate.gov using
-cookie injection to bypass CAPTCHA barriers.
+Scrapes financial disclosures from efdsearch.senate.gov.
+Automatically handles the agreement page - no cookies required.
 """
 from __future__ import annotations
 
@@ -148,9 +148,11 @@ class SenateScraper:
     """
     Scraper for Senate financial disclosures.
     
-    Uses cookie injection to bypass CAPTCHA barriers.
-    Falls back gracefully if cookies expire.
+    Automatically handles the agreement page without requiring cookies.
+    Falls back gracefully if automatic authentication fails.
     """
+    
+    _agreement_accepted: bool = False  # Class-level flag to track agreement state
     
     def __init__(self):
         self.config = get_config()
@@ -171,13 +173,11 @@ class SenateScraper:
             "Referer": SEARCH_URL,
         })
         
-        # Load and inject cookies
+        # Load cookies if available (optional enhancement, not required)
         cookies = self.cookie_manager.load_cookies()
         if cookies:
             self.session.cookies.update(cookies)
-            scraper_logger.info(f"Loaded {len(cookies)} cookies")
-        else:
-            scraper_logger.warning("No cookies loaded - scraper may fail")
+            scraper_logger.debug(f"Loaded {len(cookies)} optional cookies")
     
     def _check_auth(self, response: requests.Response) -> bool:
         """
@@ -185,47 +185,169 @@ class SenateScraper:
         
         Returns True if authenticated, False if auth failed.
         """
+        # DEBUG: Log detailed response info (only in debug mode)
+        scraper_logger.debug(f"AUTH CHECK - Response URL: {response.url}")
+        scraper_logger.debug(f"AUTH CHECK - Status Code: {response.status_code}")
+        
         # Check for common auth failure indicators
         if response.url and 'agreement' in response.url.lower():
+            scraper_logger.debug("AUTH CHECK FAILED: URL contains 'agreement'")
             return False
         
         if response.url and 'captcha' in response.url.lower():
+            scraper_logger.debug("AUTH CHECK FAILED: URL contains 'captcha'")
             return False
         
         # Check response content for auth walls
         content_lower = response.text.lower()
-        auth_indicators = [
-            'i understand the prohibitions',
-            'checkbox',
-            'agree to the terms',
-            'captcha',
-        ]
         
-        for indicator in auth_indicators:
-            if indicator in content_lower:
-                return False
+        # Primary indicator: agreement page has this specific text
+        if 'i understand the prohibitions' in content_lower:
+            scraper_logger.debug("AUTH CHECK FAILED: Content contains 'i understand the prohibitions'")
+            return False
         
+        # Check for captcha
+        if 'captcha' in content_lower:
+            scraper_logger.debug("AUTH CHECK FAILED: Content contains 'captcha'")
+            return False
+        
+        # Check for "agree to the terms" - strong indicator of agreement page
+        if 'agree to the terms' in content_lower:
+            scraper_logger.debug("AUTH CHECK FAILED: Content contains 'agree to the terms'")
+            return False
+        
+        # Positive indicators that we're on the search page:
+        # - Title contains "Find Reports"
+        # - URL is /search/ (not /search/home/)
+        # - Content length is larger (search page has more content)
+        if response.url.rstrip('/').endswith('/search') and len(response.text) > 10000:
+            # Additional check: look for search page specific content
+            if 'find reports' in content_lower or 'report type' in content_lower:
+                scraper_logger.debug("AUTH CHECK PASSED: On search page (Find Reports)")
+                return True
+        
+        scraper_logger.debug("AUTH CHECK PASSED")
         return True
     
+    def _accept_agreement(self) -> bool:
+        """
+        Automatically accept the Senate website agreement.
+        
+        The Senate site requires accepting terms before searching.
+        This method extracts the CSRF token from the form and POSTs the agreement.
+        
+        Returns True if agreement was accepted successfully.
+        """
+        try:
+            # Step 1: Get the agreement page to extract CSRF token
+            scraper_logger.info("Accepting Senate agreement automatically...")
+            response = self.session.get(SEARCH_URL, timeout=30, allow_redirects=True)
+            response.raise_for_status()
+            
+            # Parse the page to find the CSRF token
+            soup = BeautifulSoup(response.text, 'lxml')
+            
+            # Look for CSRF token in the form
+            csrf_input = soup.find('input', {'name': 'csrfmiddlewaretoken'})
+            if csrf_input:
+                csrf_token = csrf_input.get('value')
+            else:
+                # Also check for csrftoken cookie set by the server
+                csrf_token = None
+                for cookie in self.session.cookies:
+                    if cookie.name == 'csrftoken':
+                        csrf_token = cookie.value
+                        break
+            
+            if not csrf_token:
+                scraper_logger.error("Could not find CSRF token for agreement acceptance")
+                return False
+            
+            scraper_logger.debug(f"Found CSRF token: {csrf_token[:20]}...")
+            
+            # Step 2: POST the agreement acceptance
+            # The form posts to the current URL (/search/home/) with prohibition_agreement=1
+            agreement_payload = {
+                'csrfmiddlewaretoken': csrf_token,
+                'prohibition_agreement': '1',
+            }
+            
+            headers = {
+                'Referer': response.url,
+                'Origin': BASE_URL,
+            }
+            
+            # Post to the agreement page URL
+            post_response = self.session.post(
+                response.url,  # This will be /search/home/
+                data=agreement_payload,
+                headers=headers,
+                timeout=30,
+                allow_redirects=True
+            )
+            post_response.raise_for_status()
+            
+            scraper_logger.debug(f"POST response URL: {post_response.url}")
+            scraper_logger.debug(f"POST response status: {post_response.status_code}")
+            
+            # Step 3: Verify we're now authenticated
+            if self._check_auth(post_response):
+                scraper_logger.info("✅ Senate agreement accepted successfully")
+                return True
+            
+            # If still on agreement page, check if there's a redirect or different flow
+            if 'home' in post_response.url.lower():
+                scraper_logger.debug("Still on home page after POST, trying to access search...")
+                # Try accessing the search page directly
+                search_response = self.session.get(SEARCH_URL, timeout=30, allow_redirects=True)
+                if self._check_auth(search_response):
+                    scraper_logger.info("✅ Senate agreement accepted (after redirect check)")
+                    return True
+            
+            scraper_logger.warning("Could not confirm agreement acceptance")
+            return False
+            
+        except requests.RequestException as e:
+            scraper_logger.error(f"Failed to accept agreement: {e}")
+            return False
+    
     def _fetch_search_page(self) -> Optional[str]:
-        """Fetch the search page to verify authentication."""
+        """
+        Fetch the search page, automatically accepting agreement if needed.
+        
+        This method now handles authentication automatically without requiring
+        manually extracted cookies.
+        """
         try:
             response = self.session.get(SEARCH_URL, timeout=30, allow_redirects=True)
             response.raise_for_status()
             
-            if not self._check_auth(response):
-                scraper_logger.warning(
-                    "⚠️ REFRESH COOKIES: Senate authentication failed. "
-                    "Please extract new cookies from your browser."
-                )
-                self.db.log_event(
-                    "WARNING",
-                    "scraper_senate",
-                    "Authentication failed - cookies need refresh"
-                )
-                return None
+            # If already authenticated, return the page
+            if self._check_auth(response):
+                return response.text
             
-            return response.text
+            # Not authenticated - try to accept agreement automatically
+            scraper_logger.info("Not authenticated, attempting automatic agreement acceptance...")
+            
+            if self._accept_agreement():
+                # Try fetching again after accepting agreement
+                response = self.session.get(SEARCH_URL, timeout=30, allow_redirects=True)
+                response.raise_for_status()
+                
+                if self._check_auth(response):
+                    return response.text
+            
+            # If we still can't authenticate, log the failure
+            scraper_logger.error(
+                "❌ Senate authentication failed. "
+                "The site may have changed or requires manual interaction."
+            )
+            self.db.log_event(
+                "ERROR",
+                "scraper_senate",
+                "Automatic agreement acceptance failed"
+            )
+            return None
             
         except requests.RequestException as e:
             scraper_logger.error(f"Failed to fetch search page: {e}")
@@ -257,7 +379,11 @@ class SenateScraper:
         
         # Add CSRF token to headers if available
         headers = {}
-        csrf_token = self.session.cookies.get('csrftoken')
+        csrf_token = None
+        for cookie in self.session.cookies:
+            if cookie.name == 'csrftoken':
+                csrf_token = cookie.value
+                break
         if csrf_token:
             headers['X-CSRFToken'] = csrf_token
             # scraper_logger.debug(f"Added X-CSRFToken header: {csrf_token[:10]}...")
@@ -419,7 +545,9 @@ class SenateScraper:
         """
         Main scrape method with format forking.
         
-        1. Verify authentication
+        Automatically handles authentication without requiring cookies.
+        
+        1. Verify/authenticate automatically
         2. Search for PTR filings
         3. Fork based on format:
            - HTML: Parse directly (low latency)
@@ -427,15 +555,18 @@ class SenateScraper:
         """
         scraper_logger.info("Starting Senate scraper...")
         
-        # Check cookies
-        if not self.cookie_manager.has_valid_cookies():
-            scraper_logger.warning(
-                "⚠️ REFRESH COOKIES: No cookies configured. "
-                "Skipping Senate scrape."
-            )
-            return []
+        # Clear any existing cookies to avoid conflicts
+        self.session.cookies.clear()
         
-        # Verify authentication
+        # Load cookies if available (optional, not required)
+        cookies = self.cookie_manager.load_cookies()
+        if cookies:
+            self.session.cookies.update(cookies)
+            scraper_logger.info(f"Loaded {len(cookies)} optional cookies")
+        else:
+            scraper_logger.info("No cookies loaded - will authenticate automatically")
+        
+        # Verify/authenticate (automatic agreement acceptance)
         if not self._fetch_search_page():
             scraper_logger.warning("Skipping Senate scrape due to auth failure")
             return []

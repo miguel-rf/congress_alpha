@@ -82,7 +82,7 @@ class OpenRouterConfig:
     api_key: str = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
     base_url: str = "https://openrouter.ai/api/v1"
     # Free models on OpenRouter
-    model: str = "meta-llama/llama-3.2-3b-instruct:free"
+    model: str = "openai/gpt-oss-120b:free"
     
     def validate(self) -> bool:
         """Check if OpenRouter credentials are configured."""
