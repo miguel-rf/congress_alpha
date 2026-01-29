@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS trades (
     asset_name TEXT,
     pdf_url TEXT,
     processed INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'pending_confirmation', 'confirmed', 'rejected', 'executed')),
+    status TEXT DEFAULT 'pending',
     created_at TEXT DEFAULT (datetime('now')),
     UNIQUE(ticker, politician, trade_date, trade_type)
 );
@@ -167,20 +167,33 @@ class DatabaseManager:
     
     def __init__(self, db_path: Path = DATABASE_PATH):
         self.db_path = db_path
+        self._run_migrations()  # Run migrations FIRST for existing DBs
         self._ensure_db_exists()
-        self._run_migrations()
     
     def _ensure_db_exists(self) -> None:
         """Create database and schema if not exists."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self.get_connection() as conn:
+            # Only create tables that don't exist
+            # For existing tables, migrations handle schema updates
             conn.executescript(SCHEMA_SQL)
             db_logger.info(f"Database initialized at {self.db_path}")
     
     def _run_migrations(self) -> None:
         """Run database migrations for schema updates."""
+        # Check if database file exists first
+        if not self.db_path.exists():
+            return  # New database, schema will be created fresh
+        
         try:
             with self.get_connection() as conn:
+                # Check if trades table exists
+                cursor = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='trades'"
+                )
+                if not cursor.fetchone():
+                    return  # Table doesn't exist yet
+                
                 # Check if status column exists
                 cursor = conn.execute("PRAGMA table_info(trades)")
                 columns = [row[1] for row in cursor.fetchall()]
@@ -191,7 +204,7 @@ class DatabaseManager:
                     conn.execute("UPDATE trades SET status = 'executed' WHERE processed = 1")
                     db_logger.info("Migration: Added status column to trades table")
         except Exception as e:
-            db_logger.debug(f"Migration check: {e}")
+            db_logger.warning(f"Migration error: {e}")
     
     @contextmanager
     def get_connection(self) -> Iterator[sqlite3.Connection]:
