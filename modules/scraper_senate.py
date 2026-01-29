@@ -10,6 +10,7 @@ import json
 import re
 import random
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -358,6 +359,7 @@ class SenateScraper:
         Search for PTR filings using the Senate API.
         
         The Senate site uses a DataTables-style AJAX API.
+        Includes retry logic for 503 rate limiting errors.
         """
         # Build search payload
         payload = {
@@ -377,8 +379,13 @@ class SenateScraper:
             'order[0][dir]': 'desc',
         }
         
-        # Add CSRF token to headers if available
-        headers = {}
+        # Add CSRF token and proper AJAX headers
+        headers = {
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': f"{BASE_URL}/search/",
+            'Origin': BASE_URL,
+        }
+        
         csrf_token = None
         for cookie in self.session.cookies:
             if cookie.name == 'csrftoken':
@@ -386,30 +393,55 @@ class SenateScraper:
                 break
         if csrf_token:
             headers['X-CSRFToken'] = csrf_token
-            # scraper_logger.debug(f"Added X-CSRFToken header: {csrf_token[:10]}...")
 
-        try:
-            response = self.session.post(
-                SEARCH_API_URL,
-                data=payload,
-                headers=headers,
-                timeout=30
-            )
-            response.raise_for_status()
-            
-            # Check auth on API response too
-            if not self._check_auth(response):
-                scraper_logger.warning("⚠️ REFRESH COOKIES: API auth failed")
+        # Retry logic with exponential backoff
+        max_retries = 3
+        base_delay = 2  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                scraper_logger.debug(f"API request attempt {attempt + 1}/{max_retries}")
+                
+                response = self.session.post(
+                    SEARCH_API_URL,
+                    data=payload,
+                    headers=headers,
+                    timeout=30
+                )
+                
+                # Handle rate limiting (503) with retry
+                if response.status_code == 503:
+                    if attempt < max_retries - 1:
+                        delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                        scraper_logger.warning(f"Rate limited (503), retrying in {delay:.1f}s...")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        scraper_logger.error("Rate limited (503), max retries exceeded")
+                        return None
+                
+                response.raise_for_status()
+                
+                # Check auth on API response too
+                if not self._check_auth(response):
+                    scraper_logger.warning("⚠️ API auth check failed")
+                    return None
+                
+                return response.json()
+                
+            except requests.RequestException as e:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    scraper_logger.warning(f"Request failed: {e}, retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    scraper_logger.error(f"Search API request failed after {max_retries} attempts: {e}")
+                    return None
+            except json.JSONDecodeError as e:
+                scraper_logger.error(f"Invalid JSON response: {e}")
                 return None
-            
-            return response.json()
-            
-        except requests.RequestException as e:
-            scraper_logger.error(f"Search API request failed: {e}")
-            return None
-        except json.JSONDecodeError as e:
-            scraper_logger.error(f"Invalid JSON response: {e}")
-            return None
+        
+        return None
     
     def _parse_api_results(self, data: dict) -> list[dict]:
         """Parse the DataTables API response."""
