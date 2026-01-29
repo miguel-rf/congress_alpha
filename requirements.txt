@@ -10,6 +10,7 @@ playwright>=1.40.0
 # OCR & PDF Processing
 pytesseract>=0.3.10
 pdf2image>=1.16.0
+pdfplumber>=0.10.0
 Pillow>=10.0.0
 
 # Data Processing

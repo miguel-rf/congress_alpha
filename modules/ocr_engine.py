@@ -28,6 +28,13 @@ ocr_logger = logging.getLogger("congress_alpha.ocr_engine")
 
 # Check for optional dependencies
 try:
+    import pdfplumber
+    PDFPLUMBER_AVAILABLE = True
+except ImportError:
+    PDFPLUMBER_AVAILABLE = False
+    ocr_logger.warning("pdfplumber not available - native PDF text extraction disabled")
+
+try:
     import pytesseract
     TESSERACT_AVAILABLE = True
 except ImportError:
@@ -168,9 +175,41 @@ def extract_text_from_image(image: Image.Image) -> str:
         return ""
 
 
-def extract_text_from_pdf(pdf_path: Path, dpi: int = 300) -> str:
+def extract_text_with_pdfplumber(pdf_path: Path) -> str:
     """
-    Full pipeline: PDF -> Images -> OCR Text.
+    Extract text from a native PDF using pdfplumber.
+    Works for digitally-generated PDFs (not scanned images).
+    
+    Args:
+        pdf_path: Path to PDF file
+    
+    Returns:
+        Concatenated text from all pages, or empty string if extraction fails
+    """
+    if not PDFPLUMBER_AVAILABLE:
+        return ""
+    
+    try:
+        all_text = []
+        with pdfplumber.open(pdf_path) as pdf:
+            for i, page in enumerate(pdf.pages):
+                text = page.extract_text()
+                if text:
+                    all_text.append(text)
+                    ocr_logger.debug(f"pdfplumber extracted {len(text)} chars from page {i+1}")
+        
+        if all_text:
+            return "\n\n--- PAGE BREAK ---\n\n".join(all_text)
+        return ""
+    except Exception as e:
+        ocr_logger.warning(f"pdfplumber extraction failed: {e}")
+        return ""
+
+
+def extract_text_with_ocr(pdf_path: Path, dpi: int = 300) -> str:
+    """
+    Extract text from PDF using Tesseract OCR.
+    Used for scanned PDFs where text is in images.
     
     Args:
         pdf_path: Path to PDF file
@@ -185,11 +224,46 @@ def extract_text_from_pdf(pdf_path: Path, dpi: int = 300) -> str:
     
     all_text = []
     for i, image in enumerate(images):
-        ocr_logger.debug(f"Processing page {i + 1}/{len(images)}")
+        ocr_logger.debug(f"OCR processing page {i + 1}/{len(images)}")
         text = extract_text_from_image(image)
         all_text.append(text)
     
     return "\n\n--- PAGE BREAK ---\n\n".join(all_text)
+
+
+def extract_text_from_pdf(pdf_path: Path, dpi: int = 300) -> str:
+    """
+    Extract text from PDF - tries pdfplumber first (for native PDFs),
+    then falls back to Tesseract OCR (for scanned PDFs).
+    
+    Congressional disclosure PDFs are typically digitally generated,
+    so pdfplumber usually works and is much faster than OCR.
+    
+    Args:
+        pdf_path: Path to PDF file
+        dpi: Resolution for OCR image conversion (if needed)
+    
+    Returns:
+        Concatenated text from all pages
+    """
+    # First try pdfplumber for native PDF text extraction
+    ocr_logger.info(f"Attempting native text extraction with pdfplumber...")
+    text = extract_text_with_pdfplumber(pdf_path)
+    
+    if text and len(text.strip()) > 100:  # Need meaningful content
+        ocr_logger.info(f"pdfplumber extracted {len(text)} characters successfully")
+        return text
+    
+    # Fall back to OCR for scanned PDFs
+    ocr_logger.info(f"pdfplumber found no/little text, falling back to Tesseract OCR...")
+    text = extract_text_with_ocr(pdf_path, dpi)
+    
+    if text:
+        ocr_logger.info(f"OCR extracted {len(text)} characters")
+    else:
+        ocr_logger.warning(f"Both pdfplumber and OCR failed to extract text")
+    
+    return text
 
 
 # -----------------------------------------------------------------------------
@@ -312,7 +386,7 @@ async def parse_with_llm(ocr_text: str, config=None) -> list[dict]:
                 "content": prompt
             }
         ],
-        "max_tokens": 2000,
+        "max_tokens": 8000,  # Increased for models with reasoning tokens
         "temperature": 0.1,  # Low temperature for consistent extraction
     }
     
@@ -324,7 +398,7 @@ async def parse_with_llm(ocr_text: str, config=None) -> list[dict]:
     }
     
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             response = await client.post(
                 f"{config.openrouter.base_url}/chat/completions",
                 json=payload,
@@ -334,18 +408,39 @@ async def parse_with_llm(ocr_text: str, config=None) -> list[dict]:
             
             data = response.json()
             
+            # DEBUG: Log full response structure
+            ocr_logger.debug(f"API response keys: {list(data.keys())}")
+            
             # Check for API errors
             if 'error' in data:
                 ocr_logger.error(f"OpenRouter API error: {data['error']}")
                 return []
                 
             if 'choices' not in data or not data['choices']:
-                ocr_logger.error(f"Unexpected API response keys: {list(data.keys())}")
-                if 'error' in data:
-                     ocr_logger.error(f"Error detail: {data['error']}")
+                ocr_logger.error(f"Unexpected API response - no choices. Keys: {list(data.keys())}")
+                ocr_logger.error(f"Full response: {json.dumps(data, indent=2)[:1000]}")
                 return []
             
-            content = data['choices'][0]['message']['content']
+            # Get the content - handle potential variations
+            choice = data['choices'][0]
+            if 'message' not in choice:
+                ocr_logger.error(f"No 'message' in choice. Choice keys: {list(choice.keys())}")
+                ocr_logger.error(f"Choice content: {choice}")
+                return []
+            
+            content = choice['message'].get('content', '')
+            
+            # Check for finish_reason
+            finish_reason = choice.get('finish_reason', 'unknown')
+            ocr_logger.debug(f"LLM finish_reason: {finish_reason}")
+            
+            if not content or not content.strip():
+                ocr_logger.warning(f"LLM returned empty content. Finish reason: {finish_reason}")
+                ocr_logger.warning(f"Full choice: {json.dumps(choice, indent=2)[:500]}")
+                # Check if there's a refusal
+                if choice['message'].get('refusal'):
+                    ocr_logger.error(f"LLM refused: {choice['message']['refusal']}")
+                return []
             
             # DEBUG: Log raw content for diagnosis
             ocr_logger.debug(f"Raw LLM response content (first 500 chars): {repr(content[:500])}")
@@ -360,6 +455,8 @@ async def parse_with_llm(ocr_text: str, config=None) -> list[dict]:
         return []
     except (KeyError, IndexError, json.JSONDecodeError) as e:
         ocr_logger.error(f"Error parsing LLM response: {e}")
+        import traceback
+        ocr_logger.error(traceback.format_exc())
         return []
 
 
@@ -442,6 +539,39 @@ def _normalize_transaction_keys(tx: dict) -> dict:
     return normalized
 
 
+def _recover_truncated_json_array(content: str) -> list[dict]:
+    """
+    Attempt to recover complete JSON objects from a truncated JSON array.
+    
+    When LLM output is truncated (finish_reason: length), the JSON array
+    may be incomplete. This function extracts all complete objects that 
+    can be parsed.
+    """
+    objects = []
+    
+    # Find all complete JSON objects using a balanced brace approach
+    depth = 0
+    start = None
+    
+    for i, char in enumerate(content):
+        if char == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0 and start is not None:
+                obj_str = content[start:i+1]
+                try:
+                    obj = json.loads(obj_str)
+                    objects.append(obj)
+                except json.JSONDecodeError:
+                    pass  # Skip malformed objects
+                start = None
+    
+    return objects
+
+
 def _parse_json_response(content: str) -> list[dict]:
     """Extract JSON array from LLM response."""
     parsed = None
@@ -451,6 +581,13 @@ def _parse_json_response(content: str) -> list[dict]:
     
     # Sanitize content first
     content = _sanitize_json_content(content)
+    
+    # First, strip code blocks if present
+    code_block_match = re.search(r'```(?:json)?\s*([\s\S]*?)(?:```|$)', content)
+    if code_block_match:
+        content = code_block_match.group(1).strip()
+        ocr_logger.debug(f"Extracted from code block: {repr(content[:100])}")
+    
     ocr_logger.debug(f"Sanitized content (repr): {repr(content[:200])}")
     
     # Try multiple strategies to find JSON
@@ -477,18 +614,13 @@ def _parse_json_response(content: str) -> list[dict]:
                     obj_content = _sanitize_json_content(match.group())
                     parsed = json.loads(obj_content)
                 else:
-                    # 4. Try code blocks
-                    match = re.search(r'```(?:json)?\s*([\s\S]*?)```', content)
-                    if match:
-                        ocr_logger.debug(f"Found code block match: {repr(match.group(1)[:100])}")
-                        # Sanitize the extracted content
-                        code_content = _sanitize_json_content(match.group(1))
-                        parsed = json.loads(code_content)
-                    else:
-                        ocr_logger.debug("No JSON patterns found in content")
+                    ocr_logger.debug("No JSON patterns found in content")
         except json.JSONDecodeError as e2:
             ocr_logger.debug(f"Secondary JSON parse failed: {e2}")
-            pass
+            # Try to recover truncated JSON array - find all complete objects
+            parsed = _recover_truncated_json_array(content)
+            if parsed:
+                ocr_logger.debug(f"Recovered {len(parsed)} objects from truncated JSON")
 
     # Normalize result and transaction keys
     if isinstance(parsed, list):

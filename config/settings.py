@@ -81,8 +81,9 @@ class OpenRouterConfig:
     """OpenRouter LLM API configuration."""
     api_key: str = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
     base_url: str = "https://openrouter.ai/api/v1"
-    # Free models on OpenRouter
-    model: str = "openai/gpt-oss-120b:free"
+    # Free models on OpenRouter (avoid reasoning models that consume tokens internally)
+    # Options: google/gemma-3n-e2b-it:free, qwen/qwen3-coder:free
+    model: str = "google/gemma-3n-e2b-it:free"
     
     def validate(self) -> bool:
         """Check if OpenRouter credentials are configured."""
