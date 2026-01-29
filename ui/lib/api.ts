@@ -53,6 +53,14 @@ export const signalsApi = {
     confirm: (id: number) => request<{ status: string; message: string }>(`/api/signals/${id}/confirm`, { method: "POST" }),
 
     reject: (id: number) => request<{ status: string; message: string }>(`/api/signals/${id}/reject`, { method: "POST" }),
+
+    delete: (id: number) => request<{ status: string; message: string }>(`/api/signals/${id}`, { method: "DELETE" }),
+
+    deleteAll: (processedOnly: boolean = false) => 
+        request<{ status: string; message: string; deleted_count: number }>(
+            `/api/signals?processed_only=${processedOnly}`, 
+            { method: "DELETE" }
+        ),
 };
 
 // Trades API

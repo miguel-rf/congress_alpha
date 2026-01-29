@@ -297,6 +297,21 @@ class DatabaseManager:
             )
             return cursor.rowcount > 0
     
+    def delete_signal(self, signal_id: int) -> bool:
+        """Delete a signal permanently."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("DELETE FROM trades WHERE id = ?", (signal_id,))
+            return cursor.rowcount > 0
+    
+    def delete_all_signals(self, processed_only: bool = False) -> int:
+        """Delete all signals. Returns count of deleted signals."""
+        with self.get_connection() as conn:
+            if processed_only:
+                cursor = conn.execute("DELETE FROM trades WHERE processed = 1")
+            else:
+                cursor = conn.execute("DELETE FROM trades")
+            return cursor.rowcount
+    
     def signal_exists(self, ticker: str, politician: str, 
                       trade_date: str, trade_type: str) -> bool:
         """Check if a signal already exists (deduplication)."""

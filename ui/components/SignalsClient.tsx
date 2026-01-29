@@ -64,6 +64,36 @@ export default function SignalsClient() {
         }
     };
 
+    const handleDelete = async (signalId: number) => {
+        if (!confirm("Are you sure you want to delete this signal?")) return;
+        
+        setActionLoading(signalId);
+        try {
+            await signalsApi.delete(signalId);
+            refresh();
+        } catch (error) {
+            console.error("Failed to delete signal:", error);
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
+    const handleDeleteAll = async (processedOnly: boolean) => {
+        const message = processedOnly 
+            ? "Are you sure you want to delete all PROCESSED signals?" 
+            : "Are you sure you want to delete ALL signals? This cannot be undone!";
+        
+        if (!confirm(message)) return;
+        
+        try {
+            const result = await signalsApi.deleteAll(processedOnly);
+            alert(`Deleted ${result.deleted_count} signals`);
+            refresh();
+        } catch (error) {
+            console.error("Failed to delete signals:", error);
+        }
+    };
+
     if (isLoading || !signals) {
         return <SignalsSkeleton />;
     }
@@ -96,8 +126,9 @@ export default function SignalsClient() {
                 </div>
             </header>
 
-            {/* Filters */}
-            <div style={{ marginBottom: "1.5rem", display: "flex", gap: "1rem" }}>
+            {/* Filters and Actions */}
+            <div style={{ marginBottom: "1.5rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: "1rem" }}>
                 <button
                     onClick={() => setFilter(undefined)}
                     className={`btn ${processed === undefined ? "btn-primary" : "btn-secondary"}`}
@@ -116,6 +147,27 @@ export default function SignalsClient() {
                 >
                     Processed
                 </button>
+                </div>
+                
+                {/* Delete Actions */}
+                <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <button
+                        onClick={() => handleDeleteAll(true)}
+                        className="btn btn-secondary"
+                        style={{ fontSize: "0.75rem" }}
+                        title="Delete only processed/executed signals"
+                    >
+                        🗑️ Clear Processed
+                    </button>
+                    <button
+                        onClick={() => handleDeleteAll(false)}
+                        className="btn btn-danger"
+                        style={{ fontSize: "0.75rem" }}
+                        title="Delete ALL signals (cannot be undone)"
+                    >
+                        🗑️ Delete All
+                    </button>
+                </div>
             </div>
 
             {/* Signals Table */}
@@ -183,26 +235,39 @@ export default function SignalsClient() {
                                         </span>
                                     </td>
                                     <td>
-                                        {signal.status === "pending_confirmation" && signal.id && (
-                                            <div style={{ display: "flex", gap: "0.5rem" }}>
+                                        <div style={{ display: "flex", gap: "0.5rem" }}>
+                                            {signal.status === "pending_confirmation" && signal.id && (
+                                                <>
+                                                    <button
+                                                        onClick={() => handleConfirm(signal.id!)}
+                                                        disabled={actionLoading === signal.id}
+                                                        className="btn btn-success"
+                                                        style={{ padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                                    >
+                                                        {actionLoading === signal.id ? "..." : signal.trade_type === "purchase" ? "Buy" : "Sell"}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleReject(signal.id!)}
+                                                        disabled={actionLoading === signal.id}
+                                                        className="btn btn-danger"
+                                                        style={{ padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                                    >
+                                                        {actionLoading === signal.id ? "..." : "Reject"}
+                                                    </button>
+                                                </>
+                                            )}
+                                            {signal.id && (
                                                 <button
-                                                    onClick={() => handleConfirm(signal.id!)}
+                                                    onClick={() => handleDelete(signal.id!)}
                                                     disabled={actionLoading === signal.id}
-                                                    className="btn btn-success"
+                                                    className="btn btn-secondary"
                                                     style={{ padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                                    title="Delete this signal"
                                                 >
-                                                    {actionLoading === signal.id ? "..." : signal.trade_type === "purchase" ? "Buy" : "Sell"}
+                                                    {actionLoading === signal.id ? "..." : "🗑️"}
                                                 </button>
-                                                <button
-                                                    onClick={() => handleReject(signal.id!)}
-                                                    disabled={actionLoading === signal.id}
-                                                    className="btn btn-danger"
-                                                    style={{ padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
-                                                >
-                                                    {actionLoading === signal.id ? "..." : "Reject"}
-                                                </button>
-                                            </div>
-                                        )}
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ))}

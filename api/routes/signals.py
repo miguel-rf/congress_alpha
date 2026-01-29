@@ -312,3 +312,36 @@ async def mark_signal_processed(signal_id: int):
     
     db.mark_signal_processed(signal_id)
     return {"status": "success", "message": f"Signal {signal_id} marked as processed"}
+
+
+@router.delete("/{signal_id}")
+async def delete_signal(signal_id: int):
+    """
+    Delete a signal permanently.
+    """
+    db = get_db()
+    
+    success = db.delete_signal(signal_id)
+    if success:
+        return {"status": "success", "message": f"Signal {signal_id} deleted"}
+    else:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+
+@router.delete("")
+async def delete_all_signals(
+    processed_only: bool = Query(False, description="Only delete processed signals")
+):
+    """
+    Delete all signals.
+    
+    - **processed_only**: If true, only delete processed/executed signals
+    """
+    db = get_db()
+    
+    count = db.delete_all_signals(processed_only=processed_only)
+    return {
+        "status": "success", 
+        "message": f"Deleted {count} signals",
+        "deleted_count": count
+    }
