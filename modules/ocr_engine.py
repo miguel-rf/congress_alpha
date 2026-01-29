@@ -276,6 +276,18 @@ async def parse_with_llm(ocr_text: str, config=None) -> list[dict]:
             response.raise_for_status()
             
             data = response.json()
+            
+            # Check for API errors
+            if 'error' in data:
+                ocr_logger.error(f"OpenRouter API error: {data['error']}")
+                return []
+                
+            if 'choices' not in data or not data['choices']:
+                ocr_logger.error(f"Unexpected API response keys: {list(data.keys())}")
+                if 'error' in data:
+                     ocr_logger.error(f"Error detail: {data['error']}")
+                return []
+            
             content = data['choices'][0]['message']['content']
             
             # Extract JSON from response
@@ -299,28 +311,37 @@ def parse_with_llm_sync(ocr_text: str, config=None) -> list[dict]:
 
 def _parse_json_response(content: str) -> list[dict]:
     """Extract JSON array from LLM response."""
-    # Try direct parse
+    parsed = None
+    
+    # Try multiple strategies to find JSON
     try:
-        return json.loads(content)
+        # 1. Direct parse
+        parsed = json.loads(content)
     except json.JSONDecodeError:
-        pass
-    
-    # Try to find JSON array in response
-    match = re.search(r'\[[\s\S]*\]', content)
-    if match:
         try:
-            return json.loads(match.group())
+            # 2. Find JSON array
+            match = re.search(r'\[[\s\S]*\]', content)
+            if match:
+                parsed = json.loads(match.group())
+            else:
+                # 3. Find JSON object (single)
+                match = re.search(r'\{[\s\S]*\}', content)
+                if match:
+                    parsed = json.loads(match.group())
+                else:
+                    # 4. Try code blocks
+                    match = re.search(r'```(?:json)?\s*([\s\S]*?)```', content)
+                    if match:
+                        parsed = json.loads(match.group(1))
         except json.JSONDecodeError:
             pass
-    
-    # Try to find JSON between code blocks
-    match = re.search(r'```(?:json)?\s*([\s\S]*?)```', content)
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except json.JSONDecodeError:
-            pass
-    
+
+    # Normalize result
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        return [parsed]
+        
     ocr_logger.warning("Could not parse JSON from LLM response")
     return []
 
