@@ -210,14 +210,14 @@ Return ONLY valid JSON array. If no transactions found, return [].
 
 Example output:
 [
-  {
+  {{
     "ticker": "AAPL",
     "asset_name": "Apple Inc.",
     "trade_type": "purchase",
     "trade_date": "2024-01-15",
     "amount": "$15,001 - $50,000",
     "owner": "Self"
-  }
+  }}
 ]
 
 OCR TEXT:
