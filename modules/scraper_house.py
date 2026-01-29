@@ -194,11 +194,11 @@ class HousePlaywrightScraper:
             # Select filing year
             year_select = self._page.locator('select[name="FilingYear"], #FilingYear')
             if year_select.count() > 0:
-                year_select.select_option(str(year))
+                year_select.first.select_option(str(year))
                 self._random_delay(0.5, 1)
             
-            # Click search button
-            search_btn = self._page.locator('input[type="submit"], button[type="submit"]').first
+            # Click search button (it's a <button type="submit">, not <input>)
+            search_btn = self._page.locator('button[type="submit"]:has-text("Search")').first
             if search_btn.count() > 0:
                 search_btn.click()
                 self._page.wait_for_load_state("networkidle", timeout=60000)
@@ -245,13 +245,16 @@ class HousePlaywrightScraper:
                     href = name_link.get_attribute('href') or ''
                     
                     # Build full URL
+                    # Relative hrefs like "public_disc/ptr-pdfs/2026/20033751.pdf" 
+                    # should become "https://disclosures-clerk.house.gov/public_disc/..."
                     if href:
-                        if href.startswith('/'):
-                            pdf_url = BASE_URL + href
-                        elif href.startswith('http'):
+                        if href.startswith('http'):
                             pdf_url = href
+                        elif href.startswith('/'):
+                            pdf_url = BASE_URL + href
                         else:
-                            pdf_url = f"{BASE_URL}/FinancialDisclosure/{href}"
+                            # Relative path - append to base URL directly
+                            pdf_url = f"{BASE_URL}/{href}"
                     else:
                         pdf_url = None
                     
@@ -289,13 +292,7 @@ class HousePlaywrightScraper:
         try:
             self._random_delay(0.5, 1.5)
             
-            # Use Playwright's download handling
-            with self._page.expect_download(timeout=90000) as download_info:
-                self._page.goto(url, timeout=90000)
-            
-            download = download_info.value
-            
-            # Generate filename
+            # Generate filename upfront
             safe_name = re.sub(r'[^\w\-]', '_', politician)[:50]
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"house_{safe_name}_{timestamp}.pdf"
@@ -304,36 +301,34 @@ class HousePlaywrightScraper:
             # Ensure directory exists
             RAW_PDFS_DIR.mkdir(parents=True, exist_ok=True)
             
-            download.save_as(filepath)
-            scraper_logger.info(f"Downloaded PDF: {filepath}")
-            return filepath
+            scraper_logger.info(f"Downloading PDF from: {url}")
             
-        except Exception as e:
-            # Fallback: try direct navigation and save content
+            # Use expect_download which properly handles the download event
             try:
-                scraper_logger.debug(f"Download handler failed, trying direct fetch: {e}")
-                response = self._page.goto(url, timeout=90000)
+                with self._page.expect_download(timeout=60000) as download_info:
+                    # Navigate to trigger download - use evaluate to avoid the navigation error
+                    self._page.evaluate(f"window.location.href = '{url}'")
                 
-                if response and response.ok:
-                    content = response.body()
-                    
-                    # Verify it's a PDF
-                    if content[:4] == b'%PDF':
-                        safe_name = re.sub(r'[^\w\-]', '_', politician)[:50]
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        filename = f"house_{safe_name}_{timestamp}.pdf"
-                        filepath = RAW_PDFS_DIR / filename
-                        
-                        RAW_PDFS_DIR.mkdir(parents=True, exist_ok=True)
-                        
-                        with open(filepath, 'wb') as f:
-                            f.write(content)
-                        
-                        scraper_logger.info(f"Downloaded PDF (direct): {filepath}")
-                        return filepath
-            except Exception as e2:
-                scraper_logger.error(f"Failed to download PDF: {e2}")
-            
+                download = download_info.value
+                # Wait for download to complete
+                download_path = download.path()
+                if download_path:
+                    # Copy to our destination
+                    import shutil
+                    shutil.copy(download_path, filepath)
+                    scraper_logger.info(f"Downloaded PDF: {filepath.name}")
+                    return filepath
+                else:
+                    download.save_as(filepath)
+                    scraper_logger.info(f"Downloaded PDF (save_as): {filepath.name}")
+                    return filepath
+                
+            except Exception as download_err:
+                scraper_logger.warning(f"Download failed: {download_err}")
+                return None
+                
+        except Exception as e:
+            scraper_logger.error(f"Failed to download PDF: {e}")
             return None
     
     def scrape(self, year: Optional[int] = None) -> list[dict]:
@@ -378,6 +373,7 @@ class HousePlaywrightScraper:
             
             # Normalize whitelist for comparison
             whitelist_normalized = [normalize_name(p) for p in whitelist]
+            scraper_logger.info(f"Filtering {len(filings)} filings against {len(whitelist)} whitelisted politicians...")
             
             whitelisted_filings = []
             
@@ -400,17 +396,19 @@ class HousePlaywrightScraper:
                     continue
                 
                 whitelisted_filings.append(filing)
+                scraper_logger.info(f"Whitelisted politician found: {filing.get('politician', 'unknown')}")
                 
                 # Download PDF
                 pdf_url = filing.get('pdf_url')
                 if pdf_url:
                     politician = filing.get('politician', 'unknown')
+                    scraper_logger.debug(f"Downloading PDF for {politician}...")
                     pdf_path = self._download_pdf(pdf_url, politician)
                     if pdf_path:
                         downloaded += 1
                     
                     # Small delay between downloads
-                    self._random_delay(2, 5)
+                    self._random_delay(1, 3)
             
             scraper_logger.info(
                 f"Processed {len(whitelisted_filings)} whitelisted filings, "

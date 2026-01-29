@@ -357,22 +357,41 @@ class SenatePlaywrightScraper:
     def _download_pdf(self, url: str, politician: str) -> Optional[Path]:
         """Download a PDF file."""
         try:
-            # Use page to download
-            with self._page.expect_download() as download_info:
-                self._page.goto(url)
-            
-            download = download_info.value
-            
-            # Generate filename
+            # Generate filename upfront
             safe_name = re.sub(r'[^\w\-]', '_', politician)[:50]
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"senate_{safe_name}_{timestamp}.pdf"
             filepath = RAW_PDFS_DIR / filename
             
-            download.save_as(filepath)
-            scraper_logger.info(f"Downloaded PDF: {filepath}")
-            return filepath
+            # Ensure directory exists
+            RAW_PDFS_DIR.mkdir(parents=True, exist_ok=True)
             
+            scraper_logger.info(f"Downloading PDF from: {url}")
+            
+            # Use expect_download which properly handles the download event
+            try:
+                with self._page.expect_download(timeout=60000) as download_info:
+                    # Navigate to trigger download - use evaluate to avoid the navigation error
+                    self._page.evaluate(f"window.location.href = '{url}'")
+                
+                download = download_info.value
+                # Wait for download to complete
+                download_path = download.path()
+                if download_path:
+                    # Copy to our destination
+                    import shutil
+                    shutil.copy(download_path, filepath)
+                    scraper_logger.info(f"Downloaded PDF: {filepath.name}")
+                    return filepath
+                else:
+                    download.save_as(filepath)
+                    scraper_logger.info(f"Downloaded PDF (save_as): {filepath.name}")
+                    return filepath
+                
+            except Exception as download_err:
+                scraper_logger.warning(f"Download failed: {download_err}")
+                return None
+                
         except Exception as e:
             scraper_logger.error(f"Failed to download PDF: {e}")
             return None
