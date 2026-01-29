@@ -295,7 +295,7 @@ class DatabaseManager:
         """Confirm a signal for execution."""
         with self.get_connection() as conn:
             cursor = conn.execute(
-                "UPDATE trades SET status = 'confirmed' WHERE id = ? AND status = 'pending_confirmation'",
+                "UPDATE trades SET status = 'confirmed' WHERE id = ? AND status IN ('pending', 'pending_confirmation')",
                 (signal_id,)
             )
             return cursor.rowcount > 0
@@ -304,7 +304,7 @@ class DatabaseManager:
         """Reject a signal - won't be executed."""
         with self.get_connection() as conn:
             cursor = conn.execute(
-                "UPDATE trades SET status = 'rejected', processed = 1 WHERE id = ? AND status = 'pending_confirmation'",
+                "UPDATE trades SET status = 'rejected', processed = 1 WHERE id = ? AND status IN ('pending', 'pending_confirmation')",
                 (signal_id,)
             )
             return cursor.rowcount > 0

@@ -307,6 +307,34 @@ class CongressAlphaPipeline:
                     # Determine signal type based on lag
                     signal_type = 'direct' if lag_days <= self.config.trading.stale_signal_threshold else 'sector_etf'
                     
+                    # All signals start as pending_confirmation (require manual approval)
+                    initial_status = 'pending_confirmation'
+                    
+                    # For SELL signals, check if we own the position first
+                    # If we don't own it, reject immediately
+                    if tx.trade_type == 'sale':
+                        # Check if we have a position or proxy trade for this ticker
+                        has_position = False
+                        try:
+                            from modules.trade_executor import TradeExecutor
+                            executor = TradeExecutor()
+                            position = executor.get_position(tx.ticker)
+                            if position:
+                                has_position = True
+                            else:
+                                # Also check for proxy trades
+                                proxy = self.db.get_open_proxy_trade(tx.ticker, politician)
+                                if proxy:
+                                    has_position = True
+                        except Exception as e:
+                            main_logger.warning(f"Could not check position for {tx.ticker}: {e}")
+                            # If we can't check, let it through for manual review
+                            has_position = True
+                        
+                        if not has_position:
+                            initial_status = 'rejected'
+                            main_logger.info(f"  → SELL {tx.ticker} rejected: no position owned")
+                    
                     signal = TradeSignal(
                         ticker=tx.ticker,
                         politician=politician,
@@ -321,6 +349,7 @@ class CongressAlphaPipeline:
                         pdf_url=str(pdf_path),
                         is_options=tx.is_options,
                         owner=tx.owner,
+                        status=initial_status,  # Start with confirmation required or rejected
                     )
                     
                     # Check if signal already exists (deduplication)

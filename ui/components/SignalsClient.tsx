@@ -236,7 +236,7 @@ export default function SignalsClient() {
                                     </td>
                                     <td>
                                         <div style={{ display: "flex", gap: "0.5rem" }}>
-                                            {signal.status === "pending_confirmation" && signal.id && (
+                                            {(signal.status === "pending_confirmation" || signal.status === "pending") && signal.id && (
                                                 <>
                                                     <button
                                                         onClick={() => handleConfirm(signal.id!)}
