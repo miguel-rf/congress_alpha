@@ -44,9 +44,15 @@ export const signalsApi = {
 
     getPending: () => request<import("./types").TradeSignal[]>("/api/signals/pending"),
 
+    getConfirmations: () => request<import("./types").TradeSignal[]>("/api/signals/confirmations"),
+
     getById: (id: number) => request<import("./types").TradeSignal>(`/api/signals/${id}`),
 
     markProcessed: (id: number) => request<{ status: string; message: string }>(`/api/signals/${id}/process`, { method: "POST" }),
+
+    confirm: (id: number) => request<{ status: string; message: string }>(`/api/signals/${id}/confirm`, { method: "POST" }),
+
+    reject: (id: number) => request<{ status: string; message: string }>(`/api/signals/${id}/reject`, { method: "POST" }),
 };
 
 // Trades API

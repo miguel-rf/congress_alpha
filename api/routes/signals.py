@@ -29,6 +29,7 @@ class SignalResponse(BaseModel):
     asset_name: Optional[str]
     pdf_url: Optional[str]
     processed: bool
+    status: str = "pending"
     created_at: Optional[str]
 
     class Config:
@@ -97,7 +98,8 @@ async def list_signals(
             f"""
             SELECT id, ticker, politician, trade_type, amount_midpoint,
                    trade_date, disclosure_date, lag_days, signal_type,
-                   chamber, asset_name, pdf_url, processed, created_at
+                   chamber, asset_name, pdf_url, processed, 
+                   COALESCE(status, 'pending') as status, created_at
             FROM trades
             {where_sql}
             ORDER BY created_at DESC
@@ -121,7 +123,8 @@ async def list_signals(
                 asset_name=row[10],
                 pdf_url=row[11],
                 processed=bool(row[12]),
-                created_at=row[13],
+                status=row[13] or "pending",
+                created_at=row[14],
             )
             for row in cursor.fetchall()
         ]
@@ -156,6 +159,35 @@ async def get_pending_signals():
             asset_name=s.asset_name,
             pdf_url=s.pdf_url,
             processed=s.processed,
+            status=getattr(s, 'status', 'pending'),
+            created_at=s.created_at,
+        )
+        for s in signals
+    ]
+
+
+@router.get("/confirmations", response_model=list[SignalResponse])
+async def get_pending_confirmations():
+    """Get all signals waiting for user confirmation (lag 11-90 days)."""
+    db = get_db()
+    signals = db.get_pending_confirmations()
+    
+    return [
+        SignalResponse(
+            id=s.id,
+            ticker=s.ticker,
+            politician=s.politician,
+            trade_type=s.trade_type,
+            amount_midpoint=s.amount_midpoint,
+            trade_date=s.trade_date,
+            disclosure_date=s.disclosure_date,
+            lag_days=s.lag_days,
+            signal_type=s.signal_type,
+            chamber=s.chamber,
+            asset_name=s.asset_name,
+            pdf_url=s.pdf_url,
+            processed=s.processed,
+            status=getattr(s, 'status', 'pending_confirmation'),
             created_at=s.created_at,
         )
         for s in signals
@@ -173,7 +205,8 @@ async def get_signal(signal_id: int):
             """
             SELECT id, ticker, politician, trade_type, amount_midpoint,
                    trade_date, disclosure_date, lag_days, signal_type,
-                   chamber, asset_name, pdf_url, processed, created_at
+                   chamber, asset_name, pdf_url, processed, 
+                   COALESCE(status, 'pending') as status, created_at
             FROM trades
             WHERE id = ?
             """,
@@ -198,8 +231,71 @@ async def get_signal(signal_id: int):
         asset_name=row[10],
         pdf_url=row[11],
         processed=bool(row[12]),
-        created_at=row[13],
+        status=row[13] or "pending",
+        created_at=row[14],
     )
+
+
+@router.post("/{signal_id}/confirm")
+async def confirm_signal(signal_id: int):
+    """
+    Confirm a signal for execution.
+    
+    Signals with lag 11-90 days require manual confirmation before trading.
+    """
+    db = get_db()
+    
+    # Check if signal exists and is pending confirmation
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, status FROM trades WHERE id = ?", (signal_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Signal not found")
+        
+        if row[1] != 'pending_confirmation':
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Signal is not pending confirmation (current status: {row[1]})"
+            )
+    
+    success = db.confirm_signal(signal_id)
+    if success:
+        return {"status": "success", "message": f"Signal {signal_id} confirmed for execution"}
+    else:
+        raise HTTPException(status_code=400, detail="Failed to confirm signal")
+
+
+@router.post("/{signal_id}/reject")
+async def reject_signal(signal_id: int):
+    """
+    Reject a signal - it will not be executed.
+    
+    Signals with lag 11-90 days can be rejected if user doesn't want to trade.
+    """
+    db = get_db()
+    
+    # Check if signal exists and is pending confirmation
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, status FROM trades WHERE id = ?", (signal_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Signal not found")
+        
+        if row[1] != 'pending_confirmation':
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Signal is not pending confirmation (current status: {row[1]})"
+            )
+    
+    success = db.reject_signal(signal_id)
+    if success:
+        return {"status": "success", "message": f"Signal {signal_id} rejected"}
+    else:
+        raise HTTPException(status_code=400, detail="Failed to reject signal")
 
 
 @router.post("/{signal_id}/process")

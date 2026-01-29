@@ -17,6 +17,7 @@ export interface TradeSignal {
     asset_name: string | null;
     pdf_url: string | null;
     processed: boolean;
+    status: 'pending' | 'pending_confirmation' | 'confirmed' | 'rejected' | 'executed';
     created_at: string | null;
 }
 

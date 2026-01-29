@@ -366,6 +366,104 @@ class RiskGuards:
 
 
 # -----------------------------------------------------------------------------
+# Position Sizer
+# -----------------------------------------------------------------------------
+class PositionSizer:
+    """
+    Calculates position sizes based on portfolio value and conviction level.
+    
+    Algorithm:
+    1. Base position = base_position_pct * portfolio_value
+    2. Scale based on politician's trade size (conviction indicator):
+       - Small trades (<$15k): use base position
+       - Large trades (>$250k): use max position  
+       - In between: linear interpolation
+    3. Ensure position doesn't exceed available cash
+    4. Ensure position meets minimum trade threshold
+    """
+    
+    def __init__(self):
+        self.config = get_config()
+    
+    def calculate_position(
+        self,
+        portfolio_value: float,
+        available_cash: float,
+        politician_amount: float,
+        current_price: float,
+        existing_position_value: float = 0.0
+    ) -> tuple[float, str]:
+        """
+        Calculate the number of shares to buy.
+        
+        Args:
+            portfolio_value: Total account value
+            available_cash: Cash available to trade
+            politician_amount: The midpoint dollar amount of politician's trade
+            current_price: Current stock price
+            existing_position_value: Value of existing position in this ticker
+        
+        Returns:
+            (shares_to_buy, explanation_message)
+        """
+        tc = self.config.trading
+        
+        # Handle edge cases
+        if portfolio_value <= 0:
+            return 0.0, "Portfolio value is zero or negative"
+        
+        if available_cash < tc.min_trade_amount:
+            return 0.0, f"Insufficient cash: ${available_cash:.2f} < ${tc.min_trade_amount:.2f} minimum"
+        
+        if current_price <= 0:
+            return 0.0, "Invalid stock price"
+        
+        # Step 1: Calculate conviction multiplier based on politician's trade size
+        # Linear interpolation between low and high conviction thresholds
+        if politician_amount <= tc.low_conviction_threshold:
+            conviction_mult = 0.0  # Base position
+        elif politician_amount >= tc.high_conviction_threshold:
+            conviction_mult = 1.0  # Max position
+        else:
+            # Linear interpolation
+            conviction_mult = (politician_amount - tc.low_conviction_threshold) / \
+                            (tc.high_conviction_threshold - tc.low_conviction_threshold)
+        
+        # Step 2: Calculate target position percentage
+        # Interpolate between base_position_pct and max_position_pct
+        target_pct = tc.base_position_pct + conviction_mult * (tc.max_position_pct - tc.base_position_pct)
+        
+        # Step 3: Calculate target position value
+        target_value = portfolio_value * target_pct
+        
+        # Step 4: Account for existing position
+        # Don't add more if we already have a significant position
+        additional_value = max(0, target_value - existing_position_value)
+        
+        if additional_value < tc.min_trade_amount:
+            return 0.0, f"Already have sufficient position (${existing_position_value:.2f})"
+        
+        # Step 5: Don't exceed available cash
+        buy_value = min(additional_value, available_cash * 0.95)  # Leave 5% buffer
+        
+        if buy_value < tc.min_trade_amount:
+            return 0.0, f"Insufficient cash after buffer: ${buy_value:.2f}"
+        
+        # Step 6: Calculate shares
+        shares = buy_value / current_price
+        shares = round(shares, 4)  # Trading212 supports fractional shares
+        
+        # Build explanation
+        explanation = (
+            f"Position sizing: {target_pct*100:.1f}% of portfolio "
+            f"(conviction: {conviction_mult*100:.0f}%, politician traded ${politician_amount:,.0f}). "
+            f"Buying ${buy_value:.2f} worth = {shares} shares"
+        )
+        
+        return shares, explanation
+
+
+# -----------------------------------------------------------------------------
 # Trade Executor
 # -----------------------------------------------------------------------------
 class TradeExecutor:
@@ -377,6 +475,7 @@ class TradeExecutor:
         self.risk_guards = RiskGuards()
         self.sector_mapper = SectorMapper()
         self.symbol_mapper = SymbolMapper()
+        self.position_sizer = PositionSizer()
         self._client: Optional[Trading212Client] = None
     
     @property
@@ -493,13 +592,45 @@ class TradeExecutor:
                 message="Price lookup failed"
             )
         
-        # Calculate shares to buy based on signal amount
-        # Trading212 supports fractional shares
-        target_amount = signal.amount_midpoint
-        shares = target_amount / current_price
+        # Get account info for position sizing
+        account_summary = self.client.get_account_summary()
+        if not account_summary:
+            return TradeResult(
+                success=False,
+                ticker=ticker,
+                side='buy',
+                rejected_reason="Could not get account summary",
+                message="Account lookup failed"
+            )
         
-        # Round to reasonable precision
-        shares = round(shares, 4)
+        portfolio_value = float(account_summary.get('totalValue', 0))
+        available_cash = float(account_summary.get('cash', {}).get('availableToTrade', 0))
+        
+        # Check existing position
+        existing_position = self.get_position(ticker)
+        existing_value = 0.0
+        if existing_position:
+            existing_value = existing_position['qty'] * existing_position['current_price']
+        
+        # Calculate position size using the position sizer algorithm
+        shares, sizing_msg = self.position_sizer.calculate_position(
+            portfolio_value=portfolio_value,
+            available_cash=available_cash,
+            politician_amount=signal.amount_midpoint,
+            current_price=current_price,
+            existing_position_value=existing_value
+        )
+        
+        trade_logger.info(f"  {sizing_msg}")
+        
+        if shares <= 0:
+            return TradeResult(
+                success=False,
+                ticker=ticker,
+                side='buy',
+                rejected_reason=sizing_msg,
+                message="Position sizing rejected trade"
+            )
         
         # Convert ticker to Trading212 format
         t212_ticker = self.symbol_mapper.to_trading212(ticker)
@@ -691,8 +822,10 @@ class TradeExecutor:
         Process a trade signal based on type and latency strategy.
         
         Strategies for BUY:
-        1. Immediate (lag < 45 days): Trade the specific ticker
-        2. Sector Rotation (lag > 45 days): Trade the sector ETF instead
+        1. Fresh (lag <= 10 days): Auto-execute immediately
+        2. Stale (11-45 days): Require confirmation before executing
+        3. Very Stale (46-90 days): Require confirmation + sector rotation
+        4. Expired (>90 days): Reject
         
         Strategies for SELL:
         1. Check if we have a proxy trade (ETF bought for this stock)
@@ -718,14 +851,58 @@ class TradeExecutor:
             else:
                 signal.signal_type = 'direct'
         
-        # For BUY signals, apply sector rotation if stale
+        # For BUY signals, apply signal age filtering and confirmation requirements
         elif signal.trade_type == 'purchase':
-            if lag > self.config.trading.stale_signal_threshold:
+            immediate_lag = self.config.trading.immediate_signal_max_lag  # 10 days
+            stale_lag = self.config.trading.stale_signal_threshold  # 45 days
+            max_lag = self.config.trading.max_signal_age  # 90 days
+            
+            # Reject signals that are too stale (expired)
+            if lag > max_lag:
+                trade_logger.info(
+                    f"Signal EXPIRED: {original_ticker} lag {lag} days > {max_lag} days max"
+                )
+                return TradeResult(
+                    success=False,
+                    ticker=original_ticker,
+                    side='buy',
+                    rejected_reason=f"Signal too stale: {lag} days > {max_lag} max",
+                    message="Signal expired - trade date too old"
+                )
+            
+            # Check if signal requires confirmation (lag > 10 days)
+            if lag > immediate_lag and signal.status == 'pending':
+                # Mark for confirmation instead of auto-executing
+                self.db.set_signal_status(signal.id, 'pending_confirmation')
+                trade_logger.info(
+                    f"Signal PENDING CONFIRMATION: {original_ticker} lag {lag} days "
+                    f"(requires manual approval)"
+                )
+                return TradeResult(
+                    success=False,
+                    ticker=original_ticker,
+                    side='buy',
+                    rejected_reason=f"Waiting for confirmation (lag: {lag} days)",
+                    message="Signal pending user confirmation"
+                )
+            
+            # If signal is not confirmed yet, skip it
+            if signal.status == 'pending_confirmation':
+                return TradeResult(
+                    success=False,
+                    ticker=original_ticker,
+                    side='buy',
+                    rejected_reason="Awaiting user confirmation",
+                    message="Signal pending user confirmation"
+                )
+            
+            # Apply sector rotation for stale signals (between stale threshold and max)
+            if lag > stale_lag:
                 # Stale signal - use sector rotation
                 etf = self.sector_mapper.get_sector_etf(original_ticker)
                 trade_logger.info(
                     f"Sector Rotation: {original_ticker} -> {etf} "
-                    f"(lag {lag} days > {self.config.trading.stale_signal_threshold})"
+                    f"(lag {lag} days > {stale_lag})"
                 )
                 signal._original_ticker = original_ticker  # Store for proxy tracking
                 signal.ticker = etf
@@ -759,7 +936,7 @@ class TradeExecutor:
         return result
     
     def process_pending_signals(self) -> list[TradeResult]:
-        """Process all pending trade signals."""
+        """Process all pending trade signals (excluding those awaiting confirmation)."""
         signals = self.db.get_unprocessed_signals()
         trade_logger.info(f"Processing {len(signals)} pending signals")
         

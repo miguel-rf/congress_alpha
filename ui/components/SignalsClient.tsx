@@ -12,6 +12,7 @@ export default function SignalsClient() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const [relativeTime, setRelativeTime] = useState<string>("—");
+    const [actionLoading, setActionLoading] = useState<number | null>(null);
 
     const page = searchParams.get("page") ? parseInt(searchParams.get("page")!) : 1;
     const processedParam = searchParams.get("processed");
@@ -37,6 +38,30 @@ export default function SignalsClient() {
         const params = new URLSearchParams();
         if (value !== undefined) params.set("processed", value);
         router.push(`/signals${params.toString() ? `?${params.toString()}` : ""}`);
+    };
+
+    const handleConfirm = async (signalId: number) => {
+        setActionLoading(signalId);
+        try {
+            await signalsApi.confirm(signalId);
+            refresh();
+        } catch (error) {
+            console.error("Failed to confirm signal:", error);
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
+    const handleReject = async (signalId: number) => {
+        setActionLoading(signalId);
+        try {
+            await signalsApi.reject(signalId);
+            refresh();
+        } catch (error) {
+            console.error("Failed to reject signal:", error);
+        } finally {
+            setActionLoading(null);
+        }
     };
 
     if (isLoading || !signals) {
@@ -116,6 +141,7 @@ export default function SignalsClient() {
                                 <th>Trade Date</th>
                                 <th>Lag</th>
                                 <th>Status</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -152,9 +178,31 @@ export default function SignalsClient() {
                                         </span>
                                     </td>
                                     <td>
-                                        <span className={`badge badge-${signal.processed ? "processed" : "pending"}`}>
-                                            {signal.processed ? "Processed" : "Pending"}
+                                        <span className={`badge badge-${signal.status || (signal.processed ? "executed" : "pending")}`}>
+                                            {getStatusLabel(signal)}
                                         </span>
+                                    </td>
+                                    <td>
+                                        {signal.status === "pending_confirmation" && signal.id && (
+                                            <div style={{ display: "flex", gap: "0.5rem" }}>
+                                                <button
+                                                    onClick={() => handleConfirm(signal.id!)}
+                                                    disabled={actionLoading === signal.id}
+                                                    className="btn btn-success"
+                                                    style={{ padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                                >
+                                                    {actionLoading === signal.id ? "..." : signal.trade_type === "purchase" ? "Buy" : "Sell"}
+                                                </button>
+                                                <button
+                                                    onClick={() => handleReject(signal.id!)}
+                                                    disabled={actionLoading === signal.id}
+                                                    className="btn btn-danger"
+                                                    style={{ padding: "0.25rem 0.5rem", fontSize: "0.75rem" }}
+                                                >
+                                                    {actionLoading === signal.id ? "..." : "Reject"}
+                                                </button>
+                                            </div>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -212,4 +260,12 @@ function SignalsSkeleton() {
             </div>
         </>
     );
+}
+
+function getStatusLabel(signal: TradeSignal): string {
+    if (signal.status === "pending_confirmation") return "Needs Confirmation";
+    if (signal.status === "confirmed") return "Confirmed";
+    if (signal.status === "rejected") return "Rejected";
+    if (signal.status === "executed" || signal.processed) return "Executed";
+    return "Pending";
 }

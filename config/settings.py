@@ -143,9 +143,27 @@ class TradingConfig:
     # Wash sale lookback
     wash_sale_days: int = 30
     
-    # Signal freshness thresholds
-    immediate_signal_max_lag: int = 10  # days
-    stale_signal_threshold: int = 45  # days - trigger sector rotation
+    # Signal freshness thresholds (in days since trade_date)
+    # Lag = TODAY - trade_date (how stale is the information?)
+    immediate_signal_max_lag: int = 10   # days - ideal: fresh signals
+    stale_signal_threshold: int = 45     # days - trigger sector rotation instead of direct trade
+    max_signal_age: int = 90             # days - reject signals older than this (expired)
+    
+    # Position Sizing Parameters
+    # Base position size as % of portfolio (e.g., 0.02 = 2%)
+    base_position_pct: float = 0.02
+    
+    # Maximum position size as % of portfolio (e.g., 0.05 = 5%)
+    max_position_pct: float = 0.05
+    
+    # Minimum trade amount in dollars (avoid tiny orders)
+    min_trade_amount: float = 10.0
+    
+    # Conviction scaling - multiply position for large politician trades
+    # The politician's trade size is used to scale between base and max
+    # Trades >= high_conviction_threshold get max position size
+    high_conviction_threshold: float = 250_000  # Politician trade > $250k = max conviction
+    low_conviction_threshold: float = 15_000    # Politician trade < $15k = base conviction
 
 
 # -----------------------------------------------------------------------------

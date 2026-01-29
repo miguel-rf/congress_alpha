@@ -43,6 +43,8 @@ class TradeSignal:
     id: Optional[int] = None
     created_at: Optional[str] = None
     processed: bool = False
+    # Status: 'pending', 'pending_confirmation', 'confirmed', 'rejected', 'executed'
+    status: str = 'pending'
     # Additional fields for options trades (not stored in DB, for display only)
     is_options: bool = False
     owner: Optional[str] = None  # Self, Spouse, Joint, etc.
@@ -90,6 +92,7 @@ CREATE TABLE IF NOT EXISTS trades (
     asset_name TEXT,
     pdf_url TEXT,
     processed INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'pending_confirmation', 'confirmed', 'rejected', 'executed')),
     created_at TEXT DEFAULT (datetime('now')),
     UNIQUE(ticker, politician, trade_date, trade_type)
 );
@@ -136,6 +139,7 @@ CREATE INDEX IF NOT EXISTS idx_trades_ticker ON trades(ticker);
 CREATE INDEX IF NOT EXISTS idx_trades_politician ON trades(politician);
 CREATE INDEX IF NOT EXISTS idx_trades_processed ON trades(processed);
 CREATE INDEX IF NOT EXISTS idx_trades_created ON trades(created_at);
+CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
 
 CREATE INDEX IF NOT EXISTS idx_history_ticker ON trade_history(ticker);
 CREATE INDEX IF NOT EXISTS idx_history_executed ON trade_history(executed_at);
@@ -148,6 +152,12 @@ CREATE INDEX IF NOT EXISTS idx_proxy_original ON proxy_trades(original_ticker, p
 CREATE INDEX IF NOT EXISTS idx_proxy_closed ON proxy_trades(closed);
 """
 
+# Migration SQL to add status column to existing databases
+MIGRATION_SQL = """
+-- Add status column if it doesn't exist
+ALTER TABLE trades ADD COLUMN status TEXT DEFAULT 'pending';
+"""
+
 
 # -----------------------------------------------------------------------------
 # Database Connection Management
@@ -158,6 +168,7 @@ class DatabaseManager:
     def __init__(self, db_path: Path = DATABASE_PATH):
         self.db_path = db_path
         self._ensure_db_exists()
+        self._run_migrations()
     
     def _ensure_db_exists(self) -> None:
         """Create database and schema if not exists."""
@@ -165,6 +176,22 @@ class DatabaseManager:
         with self.get_connection() as conn:
             conn.executescript(SCHEMA_SQL)
             db_logger.info(f"Database initialized at {self.db_path}")
+    
+    def _run_migrations(self) -> None:
+        """Run database migrations for schema updates."""
+        try:
+            with self.get_connection() as conn:
+                # Check if status column exists
+                cursor = conn.execute("PRAGMA table_info(trades)")
+                columns = [row[1] for row in cursor.fetchall()]
+                
+                if 'status' not in columns:
+                    conn.execute("ALTER TABLE trades ADD COLUMN status TEXT DEFAULT 'pending'")
+                    # Update existing processed signals
+                    conn.execute("UPDATE trades SET status = 'executed' WHERE processed = 1")
+                    db_logger.info("Migration: Added status column to trades table")
+        except Exception as e:
+            db_logger.debug(f"Migration check: {e}")
     
     @contextmanager
     def get_connection(self) -> Iterator[sqlite3.Connection]:
@@ -207,19 +234,55 @@ class DatabaseManager:
         """Get all unprocessed trade signals."""
         with self.get_connection() as conn:
             cursor = conn.execute("""
-                SELECT * FROM trades WHERE processed = 0
+                SELECT * FROM trades WHERE processed = 0 AND status IN ('pending', 'confirmed')
                 ORDER BY created_at ASC
             """)
             rows = cursor.fetchall()
             return [TradeSignal(**dict(row)) for row in rows]
     
     def mark_signal_processed(self, signal_id: int) -> None:
-        """Mark a signal as processed."""
+        """Mark a signal as processed/executed."""
         with self.get_connection() as conn:
             conn.execute(
-                "UPDATE trades SET processed = 1 WHERE id = ?",
+                "UPDATE trades SET processed = 1, status = 'executed' WHERE id = ?",
                 (signal_id,)
             )
+    
+    def set_signal_status(self, signal_id: int, status: str) -> None:
+        """Update signal status."""
+        with self.get_connection() as conn:
+            conn.execute(
+                "UPDATE trades SET status = ? WHERE id = ?",
+                (status, signal_id)
+            )
+    
+    def get_pending_confirmations(self) -> list[TradeSignal]:
+        """Get all signals waiting for user confirmation."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT * FROM trades WHERE status = 'pending_confirmation'
+                ORDER BY created_at ASC
+            """)
+            rows = cursor.fetchall()
+            return [TradeSignal(**dict(row)) for row in rows]
+    
+    def confirm_signal(self, signal_id: int) -> bool:
+        """Confirm a signal for execution."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE trades SET status = 'confirmed' WHERE id = ? AND status = 'pending_confirmation'",
+                (signal_id,)
+            )
+            return cursor.rowcount > 0
+    
+    def reject_signal(self, signal_id: int) -> bool:
+        """Reject a signal - won't be executed."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE trades SET status = 'rejected', processed = 1 WHERE id = ? AND status = 'pending_confirmation'",
+                (signal_id,)
+            )
+            return cursor.rowcount > 0
     
     def signal_exists(self, ticker: str, politician: str, 
                       trade_date: str, trade_type: str) -> bool:

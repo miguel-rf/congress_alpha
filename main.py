@@ -279,7 +279,8 @@ class CongressAlphaPipeline:
                 politician_parts = parts[1:-2] if len(parts) > 3 else parts[1:-1]
                 politician = ' '.join(politician_parts).replace('_', ' ').title()
                 
-                # Get today for disclosure date (approximate)
+                # Use today as the disclosure date (when we discovered/downloaded the filing)
+                # This is different from notification_date which is when the politician filed
                 from datetime import datetime
                 today = datetime.now().strftime("%Y-%m-%d")
                 
@@ -288,16 +289,18 @@ class CongressAlphaPipeline:
                     if not tx.ticker or not tx.trade_type:
                         continue
                     
-                    # Use notification_date as disclosure_date if available
-                    disclosure_date = tx.notification_date or today
+                    # Disclosure date is TODAY (when we found the filing)
+                    # notification_date from PDF is when the politician filed (not useful for lag)
+                    disclosure_date = today
                     
-                    # Calculate lag days
+                    # Calculate lag days: TODAY - trade_date
+                    # This tells us how stale the information is
                     lag_days = 0
                     if tx.trade_date:
                         try:
                             trade_dt = datetime.strptime(tx.trade_date, "%Y-%m-%d")
-                            disclosure_dt = datetime.strptime(disclosure_date, "%Y-%m-%d")
-                            lag_days = (disclosure_dt - trade_dt).days
+                            today_dt = datetime.now()
+                            lag_days = (today_dt - trade_dt).days
                         except ValueError:
                             lag_days = 30  # Default if parsing fails
                     
