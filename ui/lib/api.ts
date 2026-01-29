@@ -142,6 +142,16 @@ export const actionsApi = {
             body: JSON.stringify({ csrftoken, sessionid, raw_json }),
         }),
 
+    testCookies: () =>
+        request<{ success: boolean; message: string }>("/api/actions/cookies/test", {
+            method: "POST"
+        }),
+
+    testOpenRouter: () =>
+        request<{ success: boolean; message: string }>("/api/actions/openrouter/test", {
+            method: "POST"
+        }),
+
     // Scheduler settings
     getSchedulerSettings: () => request<{
         market_open_hour: number;

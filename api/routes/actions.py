@@ -322,6 +322,51 @@ async def update_cookies(cookies: CookieUpdate):
 
 
 # =============================================================================
+# Helper Endpoints
+# =============================================================================
+
+@router.post("/cookies/test")
+async def test_cookies():
+    """
+    Test Senate cookies authentication.
+    """
+    from modules.scraper_senate import SenateScraper
+    
+    scraper = SenateScraper()
+    
+    # Try to fetch search page (lightweight check)
+    html = scraper._fetch_search_page()
+    
+    if html:
+        return ActionResponse(
+            success=True,
+            message="Connection successful! Cookies are valid."
+        )
+    else:
+        return ActionResponse(
+            success=False,
+            message="Connection failed. Cookies may be expired or invalid."
+        )
+
+
+@router.post("/openrouter/test")
+async def test_openrouter():
+    """Test OpenRouter API connection."""
+    from modules.ocr_engine import parse_with_llm
+    
+    dummy_text = "Test transaction: Bought AAPL $1000 on 2024-01-01."
+    
+    try:
+        transactions = await parse_with_llm(dummy_text)
+        if transactions:
+             return ActionResponse(success=True, message=f"Success! AI is working.")
+        else:
+             return ActionResponse(success=False, message="Connected but failed to parse test data.")
+    except Exception as e:
+        return ActionResponse(success=False, message=f"Error: {str(e)}")
+
+
+# =============================================================================
 # Scheduler Settings
 # =============================================================================
 

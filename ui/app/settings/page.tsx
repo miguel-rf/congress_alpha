@@ -43,6 +43,7 @@ export default function SettingsPage() {
     const [cookieLoading, setCookieLoading] = useState(false);
     const [rawJson, setRawJson] = useState("");
     const [cookieMode, setCookieMode] = useState<"simple" | "json">("simple");
+    const [aiTesting, setAiTesting] = useState(false);
 
     // Add politician form
     const [politicianName, setPoliticianName] = useState("");
@@ -131,6 +132,32 @@ export default function SettingsPage() {
         }
     };
 
+    const handleTestCookies = async () => {
+        setCookieLoading(true);
+        setMessage(null);
+        try {
+            const result = await actionsApi.testCookies();
+            setMessage({ type: result.success ? "success" : "error", text: result.message });
+        } catch (error) {
+            setMessage({ type: "error", text: "Connection testing failed" });
+        } finally {
+            setCookieLoading(false);
+        }
+    };
+
+    const handleTestAI = async () => {
+        setAiTesting(true);
+        setMessage(null);
+        try {
+            const result = await actionsApi.testOpenRouter();
+            setMessage({ type: result.success ? "success" : "error", text: result.message });
+        } catch (error) {
+            setMessage({ type: "error", text: "AI Testing failed" });
+        } finally {
+            setAiTesting(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className="settings-page">
@@ -185,6 +212,26 @@ export default function SettingsPage() {
                             ok={health?.components.cookies.configured ?? false}
                             detail={cookies?.configured ? "Valid" : "Expired"}
                         />
+                    </div>
+
+                    <div className="health-actions" style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                        <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={handleTestAI}
+                            disabled={aiTesting}
+                            style={{
+                                fontSize: '0.85rem',
+                                padding: '0.3rem 0.8rem',
+                                backgroundColor: '#374151',
+                                border: 'none',
+                                color: 'white',
+                                borderRadius: '0.25rem',
+                                cursor: 'pointer',
+                                opacity: aiTesting ? 0.7 : 1
+                            }}
+                        >
+                            {aiTesting ? "Testing AI..." : "Test AI Connection"}
+                        </button>
                     </div>
                 </div>
 
@@ -305,9 +352,27 @@ export default function SettingsPage() {
                             </div>
                         )}
 
-                        <button type="submit" className="btn btn-primary" disabled={cookieLoading}>
-                            {cookieLoading ? "Updating..." : "Update Cookies"}
-                        </button>
+                        <div style={{ display: 'flex', gap: '10px', marginTop: '1rem' }}>
+                            <button type="submit" className="btn btn-primary" disabled={cookieLoading}>
+                                {cookieLoading ? "Updating..." : "Update Cookies"}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={handleTestCookies}
+                                disabled={cookieLoading}
+                                style={{
+                                    backgroundColor: '#4b5563',
+                                    color: 'white',
+                                    border: 'none',
+                                    padding: '0.75rem 1.5rem',
+                                    borderRadius: '0.5rem',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                Test Connection
+                            </button>
+                        </div>
                     </form>
                 </div>
 
