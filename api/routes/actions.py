@@ -363,16 +363,32 @@ async def test_openrouter():
         transactions = await parse_with_llm(dummy_text)
         if transactions:
              logger.info(f"OpenRouter test successful: {len(transactions)} transactions extracted")
-             return ActionResponse(success=True, message=f"Success! AI extracted {len(transactions)} transaction(s).")
+             # Show details of extracted transactions
+             tx_details = []
+             for tx in transactions:
+                 ticker = tx.get('ticker', 'N/A')
+                 trade_type = tx.get('trade_type', 'N/A')
+                 tx_details.append(f"{trade_type.upper()} {ticker}")
+             details_str = ", ".join(tx_details)
+             return ActionResponse(
+                 success=True,
+                 message=f"Success! AI extracted {len(transactions)} transaction(s): {details_str}"
+             )
         else:
              logger.warning("OpenRouter test: Connected but no transactions extracted")
-             return ActionResponse(success=False, message="Connected but failed to parse test data.")
+             return ActionResponse(
+                 success=False,
+                 message="Connected but no transactions were extracted. The AI may not have recognized the test format."
+             )
     except Exception as e:
         logger.error(f"OpenRouter test failed: {type(e).__name__}: {str(e)}")
         # Log full exception details for debugging
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
-        return ActionResponse(success=False, message=f"Error ({type(e).__name__}): {str(e)}")
+        return ActionResponse(
+            success=False,
+            message=f"Error ({type(e).__name__}): {str(e)}"
+        )
 
 
 # =============================================================================

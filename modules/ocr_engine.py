@@ -312,12 +312,80 @@ def parse_with_llm_sync(ocr_text: str, config=None) -> list[dict]:
     return asyncio.run(parse_with_llm(ocr_text, config))
 
 
+def _sanitize_json_content(content: str) -> str:
+    """
+    Sanitize LLM response content to fix common JSON formatting issues.
+    
+    Fixes:
+    - Removes leading/trailing whitespace and newlines
+    - Fixes keys with embedded newlines like '\n "ticker"'
+    - Normalizes whitespace around colons and commas
+    """
+    # Strip leading/trailing whitespace
+    content = content.strip()
+    
+    # Fix keys with embedded newlines: "\n \"key\"" -> "\"key\""
+    # This handles cases where LLM outputs malformed JSON like:
+    # {\n "ticker": "AAPL"}
+    content = re.sub(r'\n\s*"', '"', content)
+    
+    # Fix multiple consecutive newlines/spaces in JSON structure
+    content = re.sub(r'\n\s*\n', '\n', content)
+    
+    return content
+
+
+def _normalize_transaction_keys(tx: dict) -> dict:
+    """
+    Normalize transaction dictionary keys to handle malformed LLM output.
+    
+    Handles cases where keys have extra whitespace, newlines, or quotes.
+    """
+    normalized = {}
+    key_mapping = {
+        'ticker': ['ticker', 'symbol', 'stock', 'ticker_symbol'],
+        'asset_name': ['asset_name', 'asset', 'name', 'company', 'description'],
+        'trade_type': ['trade_type', 'type', 'transaction_type', 'action'],
+        'trade_date': ['trade_date', 'date', 'transaction_date'],
+        'amount': ['amount', 'value', 'amount_range', 'transaction_amount'],
+        'owner': ['owner', 'holder', 'beneficial_owner'],
+    }
+    
+    # Normalize keys: strip whitespace, lowercase, remove extra quotes
+    cleaned_tx = {}
+    for key, value in tx.items():
+        if isinstance(key, str):
+            # Clean the key: strip whitespace/newlines, remove surrounding quotes
+            cleaned_key = key.strip().lower().strip('"\'')
+            cleaned_tx[cleaned_key] = value
+        else:
+            cleaned_tx[key] = value
+    
+    # Map to standard keys
+    for standard_key, aliases in key_mapping.items():
+        for alias in aliases:
+            if alias in cleaned_tx:
+                normalized[standard_key] = cleaned_tx[alias]
+                break
+    
+    # Include any other keys that weren't mapped
+    for key, value in cleaned_tx.items():
+        if key not in normalized:
+            normalized[key] = value
+    
+    return normalized
+
+
 def _parse_json_response(content: str) -> list[dict]:
     """Extract JSON array from LLM response."""
     parsed = None
     
     # DEBUG: Log what we're trying to parse
     ocr_logger.debug(f"_parse_json_response input (repr): {repr(content[:200])}")
+    
+    # Sanitize content first
+    content = _sanitize_json_content(content)
+    ocr_logger.debug(f"Sanitized content (repr): {repr(content[:200])}")
     
     # Try multiple strategies to find JSON
     try:
@@ -331,30 +399,36 @@ def _parse_json_response(content: str) -> list[dict]:
             match = re.search(r'\[[\s\S]*\]', content)
             if match:
                 ocr_logger.debug(f"Found JSON array match: {repr(match.group()[:100])}")
-                parsed = json.loads(match.group())
+                # Sanitize the matched content too
+                array_content = _sanitize_json_content(match.group())
+                parsed = json.loads(array_content)
             else:
                 # 3. Find JSON object (single)
                 match = re.search(r'\{[\s\S]*\}', content)
                 if match:
                     ocr_logger.debug(f"Found JSON object match: {repr(match.group()[:100])}")
-                    parsed = json.loads(match.group())
+                    # Sanitize the matched content too
+                    obj_content = _sanitize_json_content(match.group())
+                    parsed = json.loads(obj_content)
                 else:
                     # 4. Try code blocks
                     match = re.search(r'```(?:json)?\s*([\s\S]*?)```', content)
                     if match:
                         ocr_logger.debug(f"Found code block match: {repr(match.group(1)[:100])}")
-                        parsed = json.loads(match.group(1))
+                        # Sanitize the extracted content
+                        code_content = _sanitize_json_content(match.group(1))
+                        parsed = json.loads(code_content)
                     else:
                         ocr_logger.debug("No JSON patterns found in content")
         except json.JSONDecodeError as e2:
             ocr_logger.debug(f"Secondary JSON parse failed: {e2}")
             pass
 
-    # Normalize result
+    # Normalize result and transaction keys
     if isinstance(parsed, list):
-        return parsed
+        return [_normalize_transaction_keys(tx) for tx in parsed if isinstance(tx, dict)]
     if isinstance(parsed, dict):
-        return [parsed]
+        return [_normalize_transaction_keys(parsed)]
         
     ocr_logger.warning(f"Could not parse JSON from LLM response. Content preview: {repr(content[:150])}")
     return []
