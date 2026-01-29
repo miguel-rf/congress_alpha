@@ -353,17 +353,26 @@ async def test_cookies():
 async def test_openrouter():
     """Test OpenRouter API connection."""
     from modules.ocr_engine import parse_with_llm
+    import logging
     
+    logger = logging.getLogger("congress_alpha.actions")
     dummy_text = "Test transaction: Bought AAPL $1000 on 2024-01-01."
     
     try:
+        logger.info("Testing OpenRouter connection...")
         transactions = await parse_with_llm(dummy_text)
         if transactions:
-             return ActionResponse(success=True, message=f"Success! AI is working.")
+             logger.info(f"OpenRouter test successful: {len(transactions)} transactions extracted")
+             return ActionResponse(success=True, message=f"Success! AI extracted {len(transactions)} transaction(s).")
         else:
+             logger.warning("OpenRouter test: Connected but no transactions extracted")
              return ActionResponse(success=False, message="Connected but failed to parse test data.")
     except Exception as e:
-        return ActionResponse(success=False, message=f"Error: {str(e)}")
+        logger.error(f"OpenRouter test failed: {type(e).__name__}: {str(e)}")
+        # Log full exception details for debugging
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        return ActionResponse(success=False, message=f"Error ({type(e).__name__}): {str(e)}")
 
 
 # =============================================================================

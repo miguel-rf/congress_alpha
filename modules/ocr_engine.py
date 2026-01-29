@@ -290,6 +290,9 @@ async def parse_with_llm(ocr_text: str, config=None) -> list[dict]:
             
             content = data['choices'][0]['message']['content']
             
+            # DEBUG: Log raw content for diagnosis
+            ocr_logger.debug(f"Raw LLM response content (first 500 chars): {repr(content[:500])}")
+            
             # Extract JSON from response
             transactions = _parse_json_response(content)
             ocr_logger.info(f"LLM extracted {len(transactions)} transactions")
@@ -313,27 +316,38 @@ def _parse_json_response(content: str) -> list[dict]:
     """Extract JSON array from LLM response."""
     parsed = None
     
+    # DEBUG: Log what we're trying to parse
+    ocr_logger.debug(f"_parse_json_response input (repr): {repr(content[:200])}")
+    
     # Try multiple strategies to find JSON
     try:
         # 1. Direct parse
         parsed = json.loads(content)
-    except json.JSONDecodeError:
+        ocr_logger.debug("JSON parsed successfully with direct parse")
+    except json.JSONDecodeError as e:
+        ocr_logger.debug(f"Direct JSON parse failed: {e}")
         try:
             # 2. Find JSON array
             match = re.search(r'\[[\s\S]*\]', content)
             if match:
+                ocr_logger.debug(f"Found JSON array match: {repr(match.group()[:100])}")
                 parsed = json.loads(match.group())
             else:
                 # 3. Find JSON object (single)
                 match = re.search(r'\{[\s\S]*\}', content)
                 if match:
+                    ocr_logger.debug(f"Found JSON object match: {repr(match.group()[:100])}")
                     parsed = json.loads(match.group())
                 else:
                     # 4. Try code blocks
                     match = re.search(r'```(?:json)?\s*([\s\S]*?)```', content)
                     if match:
+                        ocr_logger.debug(f"Found code block match: {repr(match.group(1)[:100])}")
                         parsed = json.loads(match.group(1))
-        except json.JSONDecodeError:
+                    else:
+                        ocr_logger.debug("No JSON patterns found in content")
+        except json.JSONDecodeError as e2:
+            ocr_logger.debug(f"Secondary JSON parse failed: {e2}")
             pass
 
     # Normalize result
@@ -342,7 +356,7 @@ def _parse_json_response(content: str) -> list[dict]:
     if isinstance(parsed, dict):
         return [parsed]
         
-    ocr_logger.warning("Could not parse JSON from LLM response")
+    ocr_logger.warning(f"Could not parse JSON from LLM response. Content preview: {repr(content[:150])}")
     return []
 
 
