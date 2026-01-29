@@ -254,10 +254,10 @@ async def confirm_signal(signal_id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Signal not found")
         
-        if row[1] != 'pending_confirmation':
+        if row[1] not in ('pending', 'pending_confirmation'):
             raise HTTPException(
                 status_code=400, 
-                detail=f"Signal is not pending confirmation (current status: {row[1]})"
+                detail=f"Signal cannot be confirmed (current status: {row[1]})"
             )
     
     success = db.confirm_signal(signal_id)
@@ -285,10 +285,10 @@ async def reject_signal(signal_id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Signal not found")
         
-        if row[1] != 'pending_confirmation':
+        if row[1] not in ('pending', 'pending_confirmation'):
             raise HTTPException(
                 status_code=400, 
-                detail=f"Signal is not pending confirmation (current status: {row[1]})"
+                detail=f"Signal cannot be rejected (current status: {row[1]})"
             )
     
     success = db.reject_signal(signal_id)
