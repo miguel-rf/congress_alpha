@@ -150,6 +150,18 @@ CREATE INDEX IF NOT EXISTS idx_logs_created ON logs(created_at);
 
 CREATE INDEX IF NOT EXISTS idx_proxy_original ON proxy_trades(original_ticker, politician);
 CREATE INDEX IF NOT EXISTS idx_proxy_closed ON proxy_trades(closed);
+
+-- Analyzed PDFs: tracks PDFs that have already been processed to avoid re-analysis
+CREATE TABLE IF NOT EXISTS analyzed_pdfs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename TEXT NOT NULL UNIQUE,
+    file_hash TEXT,
+    transactions_count INTEGER DEFAULT 0,
+    analyzed_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_analyzed_pdfs_filename ON analyzed_pdfs(filename);
+CREATE INDEX IF NOT EXISTS idx_analyzed_pdfs_hash ON analyzed_pdfs(file_hash);
 """
 
 # Migration SQL to add status column to existing databases
@@ -311,6 +323,38 @@ class DatabaseManager:
             else:
                 cursor = conn.execute("DELETE FROM trades")
             return cursor.rowcount
+    
+    # -------------------------------------------------------------------------
+    # Analyzed PDFs Tracking (to prevent re-processing)
+    # -------------------------------------------------------------------------
+    def is_pdf_analyzed(self, filename: str) -> bool:
+        """Check if a PDF has already been analyzed."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT 1 FROM analyzed_pdfs WHERE filename = ?",
+                (filename,)
+            )
+            return cursor.fetchone() is not None
+    
+    def mark_pdf_analyzed(self, filename: str, file_hash: str = None, 
+                          transactions_count: int = 0) -> int:
+        """Record that a PDF has been analyzed."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("""
+                INSERT OR IGNORE INTO analyzed_pdfs 
+                (filename, file_hash, transactions_count)
+                VALUES (?, ?, ?)
+            """, (filename, file_hash, transactions_count))
+            return cursor.lastrowid
+    
+    def get_analyzed_pdfs(self) -> list[dict]:
+        """Get list of all analyzed PDFs."""
+        with self.get_connection() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                "SELECT * FROM analyzed_pdfs ORDER BY analyzed_at DESC"
+            )
+            return [dict(row) for row in cursor.fetchall()]
     
     def signal_exists(self, ticker: str, politician: str, 
                       trade_date: str, trade_type: str) -> bool:

@@ -10,6 +10,7 @@ import re
 import json
 import logging
 import tempfile
+import hashlib
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, asdict
@@ -741,22 +742,74 @@ def process_all_pending_pdfs() -> list[tuple[Path, list[ExtractedTransaction]]]:
     """
     Process all PDFs in the raw_pdfs directory.
     
+    - Skips PDFs that have already been analyzed (tracked in database)
+    - Marks each PDF as analyzed after processing
+    - Deletes processed PDFs to prevent accumulation
+    
     Returns:
         List of (pdf_path, transactions) tuples
     """
+    from modules.db_manager import DatabaseManager
+    
     results = []
+    db = DatabaseManager()
     
     if not RAW_PDFS_DIR.exists():
         ocr_logger.warning(f"PDF directory not found: {RAW_PDFS_DIR}")
         return results
     
     pdf_files = list(RAW_PDFS_DIR.glob("*.pdf"))
-    ocr_logger.info(f"Found {len(pdf_files)} PDFs to process")
+    ocr_logger.info(f"Found {len(pdf_files)} PDFs in directory")
+    
+    # Track which PDFs we process in this run (for cleanup)
+    processed_this_run = []
+    skipped_count = 0
     
     for pdf_path in pdf_files:
+        filename = pdf_path.name
+        
+        # Check if this PDF was already analyzed
+        if db.is_pdf_analyzed(filename):
+            ocr_logger.debug(f"Skipping already analyzed PDF: {filename}")
+            skipped_count += 1
+            # Delete old PDFs that were already processed in previous runs
+            try:
+                pdf_path.unlink()
+                ocr_logger.debug(f"Deleted previously analyzed PDF: {filename}")
+            except Exception as e:
+                ocr_logger.warning(f"Failed to delete old PDF {filename}: {e}")
+            continue
+        
+        # Calculate file hash for tracking
+        try:
+            with open(pdf_path, 'rb') as f:
+                file_hash = hashlib.md5(f.read()).hexdigest()
+        except Exception:
+            file_hash = None
+        
+        # Process the PDF
         transactions = process_pdf(pdf_path)
+        
         if transactions:
             results.append((pdf_path, transactions))
+        
+        # Mark as analyzed in database (even if no transactions found)
+        db.mark_pdf_analyzed(filename, file_hash, len(transactions))
+        processed_this_run.append(pdf_path)
+        ocr_logger.info(f"Analyzed and recorded: {filename} ({len(transactions)} transactions)")
+    
+    if skipped_count > 0:
+        ocr_logger.info(f"Skipped {skipped_count} already-analyzed PDFs")
+    
+    # Delete PDFs that were processed in this run (cleanup)
+    for pdf_path in processed_this_run:
+        try:
+            pdf_path.unlink()
+            ocr_logger.debug(f"Deleted processed PDF: {pdf_path.name}")
+        except Exception as e:
+            ocr_logger.warning(f"Failed to delete processed PDF {pdf_path.name}: {e}")
+    
+    ocr_logger.info(f"Processed {len(results)} PDFs with transactions, deleted {len(processed_this_run)} files")
     
     return results
 

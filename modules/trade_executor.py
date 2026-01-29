@@ -724,13 +724,16 @@ class TradeExecutor:
         # Check if we own this position
         position = self.get_position(ticker)
         if not position:
-            trade_logger.info(f"No position in {ticker}, ignoring sell signal")
+            trade_logger.info(f"No position in {ticker}, cancelling sell signal")
+            # Mark signal as rejected since we can't sell what we don't own
+            if hasattr(signal, 'id') and signal.id:
+                self.db.set_signal_status(signal.id, 'rejected')
             return TradeResult(
                 success=False,
                 ticker=ticker,
                 side='sell',
-                rejected_reason="No position to sell",
-                message="Ownership check failed"
+                rejected_reason="No position to sell - signal cancelled",
+                message="Sell cancelled - no position owned"
             )
         
         # Determine shares to sell:
@@ -837,6 +840,32 @@ class TradeExecutor:
         
         # For SELL signals, first check if we have a proxy trade to close
         if signal.trade_type == 'sale':
+            # ALL signals (including sells) require confirmation
+            if signal.status == 'pending':
+                self.db.set_signal_status(signal.id, 'pending_confirmation')
+                trade_logger.info(
+                    f"SELL Signal PENDING CONFIRMATION: {original_ticker} lag {lag} days "
+                    f"(all trades require manual approval)"
+                )
+                return TradeResult(
+                    success=False,
+                    ticker=original_ticker,
+                    side='sell',
+                    rejected_reason=f"Waiting for confirmation (lag: {lag} days)",
+                    message="Signal pending user confirmation"
+                )
+            
+            # If signal is not confirmed yet, skip it
+            if signal.status == 'pending_confirmation':
+                return TradeResult(
+                    success=False,
+                    ticker=original_ticker,
+                    side='sell',
+                    rejected_reason="Awaiting user confirmation",
+                    message="Signal pending user confirmation"
+                )
+            
+            # Now check proxy trades for confirmed sell signals
             proxy = self.db.get_open_proxy_trade(original_ticker, signal.politician)
             if proxy:
                 trade_logger.info(
@@ -853,7 +882,6 @@ class TradeExecutor:
         
         # For BUY signals, apply signal age filtering and confirmation requirements
         elif signal.trade_type == 'purchase':
-            immediate_lag = self.config.trading.immediate_signal_max_lag  # 10 days
             stale_lag = self.config.trading.stale_signal_threshold  # 45 days
             max_lag = self.config.trading.max_signal_age  # 90 days
             
@@ -870,13 +898,13 @@ class TradeExecutor:
                     message="Signal expired - trade date too old"
                 )
             
-            # Check if signal requires confirmation (lag > 10 days)
-            if lag > immediate_lag and signal.status == 'pending':
-                # Mark for confirmation instead of auto-executing
+            # ALL signals require confirmation before execution
+            if signal.status == 'pending':
+                # Mark for confirmation - all trades need manual approval
                 self.db.set_signal_status(signal.id, 'pending_confirmation')
                 trade_logger.info(
                     f"Signal PENDING CONFIRMATION: {original_ticker} lag {lag} days "
-                    f"(requires manual approval)"
+                    f"(all trades require manual approval)"
                 )
                 return TradeResult(
                     success=False,
